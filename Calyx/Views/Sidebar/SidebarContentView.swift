@@ -647,6 +647,9 @@ private struct TabRowItemView: View {
             ))
         }
         .onAssumeInsideHover($isHovering)
+        .onChange(of: tab.renameRequestID) { _, newValue in
+            if newValue != nil { isEditing = true }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AccessibilityID.Sidebar.tab(tab.id))
         // The title `Text` lives inside the `TabClickContainer`'s

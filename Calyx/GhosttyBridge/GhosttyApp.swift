@@ -502,6 +502,7 @@ extension Notification.Name {
     static let ghosttyCloseTab = Notification.Name("com.calyx.ghostty.closeTab")
     static let ghosttyCloseWindow = Notification.Name("com.calyx.ghostty.closeWindow")
     static let ghosttySetTitle = Notification.Name("com.calyx.ghostty.setTitle")
+    static let ghosttyPromptTabTitle = Notification.Name("com.calyx.ghostty.promptTabTitle")
     static let ghosttySetPwd = Notification.Name("com.calyx.ghostty.setPwd")
     static let ghosttyCellSizeChange = Notification.Name("com.calyx.ghostty.cellSizeChange")
     static let ghosttyInitialSize = Notification.Name("com.calyx.ghostty.initialSize")

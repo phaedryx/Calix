@@ -2072,6 +2072,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
                            name: .ghosttyEqualizeSplits, object: nil)
         center.addObserver(self, selector: #selector(handleSetTitleNotification(_:)),
                            name: .ghosttySetTitle, object: nil)
+        center.addObserver(self, selector: #selector(handlePromptTabTitleNotification(_:)),
+                           name: .ghosttyPromptTabTitle, object: nil)
         center.addObserver(self, selector: #selector(handleSetPwdNotification(_:)),
                            name: .ghosttySetPwd, object: nil)
         center.addObserver(self, selector: #selector(handleProgressReportNotification(_:)),
@@ -3060,6 +3062,25 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
             window?.title = tab.titleOverride ?? title
             refreshHostingView()
         }
+    }
+
+    /// `prompt_surface_title`/`prompt_tab_title` keybind, forwarded from
+    /// `GhosttyActionRouter.handlePromptTitle` as `.ghosttyPromptTabTitle`.
+    @objc private func handlePromptTabTitleNotification(_ notification: Notification) {
+        guard let surfaceView = notification.object as? SurfaceView else { return }
+        guard belongsToThisWindow(surfaceView) else { return }
+        guard let (tab, _) = findTab(for: surfaceView) else { return }
+
+        promptTabTitle(for: tab)
+    }
+
+    /// Triggers the same inline rename editor a double-click on `tab`
+    /// opens, by bumping `Tab.renameRequestID` — `TabItemButton`
+    /// (`TabBarContentView`) and `TabRowItemView` (`SidebarContentView`)
+    /// both observe it and flip their local `isEditing` state, so this
+    /// works whichever of the two is currently displaying the tab.
+    private func promptTabTitle(for tab: Tab) {
+        tab.renameRequestID = UUID()
     }
 
     /// OSC 9;4 progress-report signal (`GHOSTTY_ACTION_PROGRESS_REPORT`,

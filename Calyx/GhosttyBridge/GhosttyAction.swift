@@ -150,6 +150,9 @@ enum GhosttyActionRouter {
         case GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL:
             return handleToggleQuickTerminal(app, target: target)
 
+        case GHOSTTY_ACTION_PROMPT_TITLE:
+            return handlePromptTitle(app, target: target, value: action.action.prompt_title)
+
         case GHOSTTY_ACTION_CLOSE_ALL_WINDOWS,
              GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW,
              GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
@@ -160,7 +163,6 @@ enum GhosttyActionRouter {
              GHOSTTY_ACTION_PRESENT_TERMINAL,
              GHOSTTY_ACTION_QUIT_TIMER,
              GHOSTTY_ACTION_FLOAT_WINDOW,
-             GHOSTTY_ACTION_PROMPT_TITLE,
              GHOSTTY_ACTION_INSPECTOR,
              GHOSTTY_ACTION_RENDER_INSPECTOR,
              GHOSTTY_ACTION_SHOW_GTK_INSPECTOR,
@@ -194,6 +196,27 @@ enum GhosttyActionRouter {
             name: .ghosttySetTitle,
             object: surfaceView,
             userInfo: ["title": title]
+        )
+        return true
+    }
+
+    /// Fired by the `prompt_surface_title`/`prompt_tab_title` keybind
+    /// actions (always dispatched with a surface target — see
+    /// `Surface.zig`'s `prompt_surface_title`/`prompt_tab_title` cases).
+    /// Calyx has no per-pane title distinct from the tab (no split-pane
+    /// header UI), so both variants forward the same way, as
+    /// `.ghosttyPromptTabTitle`, for `CalyxWindowController` to show the
+    /// rename prompt for the tab that owns this surface.
+    private static func handlePromptTitle(
+        _ app: ghostty_app_t,
+        target: ghostty_target_s,
+        value: ghostty_action_prompt_title_e
+    ) -> Bool {
+        guard let surfaceView = surfaceView(from: target) else { return false }
+
+        NotificationCenter.default.post(
+            name: .ghosttyPromptTabTitle,
+            object: surfaceView
         )
         return true
     }

@@ -21,6 +21,13 @@ class Tab: Identifiable {
     var content: TabContent
     var unreadNotifications: Int = 0
     var lastNotificationTime: Date?
+    /// Bumped to request that whichever tab UI (`TabItemButton` or
+    /// `TabRowItemView`) is currently displaying this tab enter inline
+    /// rename mode, mirroring what a double-click does. Set by the
+    /// `prompt_tab_title`/`prompt_surface_title` keybind handler in
+    /// `CalyxWindowController`, since that fires from AppKit with no
+    /// direct handle on the SwiftUI view's local `isEditing` state.
+    var renameRequestID: UUID?
     let registry: SurfaceRegistry
     /// calyx-session references for this tab's persistent-session
     /// leaves, keyed by leaf (surface) UUID. Empty for a tab with no
