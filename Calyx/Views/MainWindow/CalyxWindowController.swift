@@ -1261,10 +1261,15 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// parameter existed. Reached by `AppDelegate.spawnRemoteSessionTab
     /// (host:)` when a key window controller already exists.
     ///
-    /// `spawnCwd` (Cockpit `tab_create`): forwarded to
+    /// `spawnCwd` (Cockpit `tab_create`): resolved via
     /// `resolveNewTabSpawnCwd(override:)`, which returns the pre-Cockpit
     /// `activeTab?.pwd ?? NSHomeDirectory()` expression unchanged when
-    /// `nil` (every existing caller's shape).
+    /// `nil` (every existing caller's shape). The resolved value is passed
+    /// as BOTH `passthroughPwd` and `spawnCwd` into `createManagedSurface`
+    /// -- `createManagedSurface`'s `.passthrough` branch (the default;
+    /// persistent sessions are opt-in) only reads `passthroughPwd`, so a
+    /// `tab_create` cwd override that fed `spawnCwd` alone was silently
+    /// dropped whenever persistent sessions were off.
     func createNewTab(inheritedConfig: Any? = nil, host: String? = nil, spawnCwd: String? = nil) {
         guard let app = GhosttyAppController.shared.app,
               let window = self.window,
@@ -1280,9 +1285,10 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }
         config.scale_factor = Double(window.backingScaleFactor)
 
+        let resolvedSpawnCwd = resolveNewTabSpawnCwd(override: spawnCwd)
         guard let surfaceID = createManagedSurface(
             tab: tab, app: app, config: config,
-            passthroughPwd: nil, spawnCwd: resolveNewTabSpawnCwd(override: spawnCwd), origin: .tab, host: host
+            passthroughPwd: resolvedSpawnCwd, spawnCwd: resolvedSpawnCwd, origin: .tab, host: host
         ) else {
             logger.error("Failed to create surface for new tab")
             return
