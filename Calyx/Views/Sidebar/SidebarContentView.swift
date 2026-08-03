@@ -696,6 +696,18 @@ private struct TabRowItemView: View {
                         .lineLimit(1)
                         .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
                 }
+                if let branch = tab.gitBranch, !branch.isEmpty, branch != "HEAD" {
+                    HStack(spacing: 2) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 8))
+                        Text(branch)
+                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(.secondary)
+                    .opacity(0.7)
+                    .layoutPriority(-1)
+                }
                 Spacer()
                 if tab.unreadNotifications > 0 {
                     UnreadCountBadge(count: tab.unreadNotifications)

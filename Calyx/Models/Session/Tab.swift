@@ -17,6 +17,11 @@ class Tab: Identifiable {
     var title: String
     var titleOverride: String?
     var pwd: String?
+    /// Current branch of the repository at `pwd`, resolved asynchronously
+    /// by `CalyxWindowController.handleSetPwdNotification` whenever `pwd`
+    /// changes. `nil` while unresolved or when `pwd` isn't inside a git
+    /// repository. Ported from cmux's per-workspace sidebar git metadata.
+    var gitBranch: String?
     var splitTree: SplitTree
     var content: TabContent
     var unreadNotifications: Int = 0

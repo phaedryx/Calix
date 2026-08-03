@@ -3152,6 +3152,26 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         if changed, owningTab.id == activeTab?.id, isGitChangesSidebarVisible {
             refreshGitStatus()
         }
+        if changed {
+            refreshGitBranch(for: owningTab, pwd: pwd)
+        }
+    }
+
+    /// Resolves `tab.gitBranch` for its new `pwd`, ported from cmux's
+    /// per-workspace sidebar git metadata. Runs for every tab (not just the
+    /// active one or while the Changes sidebar is visible, unlike
+    /// `refreshGitStatus()`) since the Tabs sidebar shows every tab's own
+    /// branch. Clears the stale branch immediately so the sidebar doesn't
+    /// show the previous directory's branch while the new one resolves, and
+    /// re-checks `tab.pwd` after the await so a rapid second `cd` can't have
+    /// this write clobber a newer in-flight resolution.
+    private func refreshGitBranch(for tab: Tab, pwd: String) {
+        tab.gitBranch = nil
+        Task { [weak tab] in
+            guard let branch = try? await GitService.currentBranch(workDir: pwd) else { return }
+            guard let tab, tab.pwd == pwd else { return }
+            tab.gitBranch = branch
+        }
     }
 
     @objc private func handleGotoTabNotification(_ notification: Notification) {

@@ -65,6 +65,11 @@ enum GitService {
         )
     }
 
+    static func currentBranch(workDir: String) async throws -> String {
+        let output = try await run(args: ["rev-parse", "--abbrev-ref", "HEAD"], workDir: workDir)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     static func isGitRepository(workDir: String) async -> Bool {
         do {
             _ = try await repoRoot(workDir: workDir)

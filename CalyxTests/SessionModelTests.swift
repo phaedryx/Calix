@@ -764,6 +764,15 @@ final class SessionModelTests: XCTestCase {
                      "titleOverride should be nil by default")
     }
 
+    func test_should_have_nil_gitBranch_by_default() {
+        // Arrange & Act
+        let tab = makeTab(title: "Terminal")
+
+        // Assert
+        XCTAssertNil(tab.gitBranch,
+                     "gitBranch should be nil until CalyxWindowController resolves it for the tab's pwd")
+    }
+
     func test_should_return_override_when_titleOverride_set() {
         // Arrange
         let tab = makeTab(title: "Terminal")
