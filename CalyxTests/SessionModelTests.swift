@@ -942,4 +942,83 @@ final class SessionModelTests: XCTestCase {
         XCTAssertEqual(result, "Group 1",
                        "'Group ' (no integer suffix) must not be treated as 'Group N'; result should be Group 1")
     }
+
+    // ==================== WindowSession.moveGroup ====================
+
+    func test_should_move_group_forward_correctly() {
+        // Arrange — [A, B, C]
+        let groupA = makeGroup(name: "A")
+        let groupB = makeGroup(name: "B")
+        let groupC = makeGroup(name: "C")
+        let session = WindowSession(groups: [groupA, groupB, groupC], activeGroupID: groupA.id)
+
+        // Act — move index 0 to index 1 → [B, A, C]
+        session.moveGroup(fromIndex: 0, toIndex: 1)
+
+        // Assert
+        XCTAssertEqual(session.groups[0].id, groupB.id, "B should now be at index 0")
+        XCTAssertEqual(session.groups[1].id, groupA.id, "A should now be at index 1")
+        XCTAssertEqual(session.groups[2].id, groupC.id, "C should remain at index 2")
+    }
+
+    func test_should_move_group_backward_correctly() {
+        // Arrange — [A, B, C]
+        let groupA = makeGroup(name: "A")
+        let groupB = makeGroup(name: "B")
+        let groupC = makeGroup(name: "C")
+        let session = WindowSession(groups: [groupA, groupB, groupC], activeGroupID: groupA.id)
+
+        // Act — move index 2 to index 0 → [C, A, B]
+        session.moveGroup(fromIndex: 2, toIndex: 0)
+
+        // Assert
+        XCTAssertEqual(session.groups[0].id, groupC.id, "C should now be at index 0")
+        XCTAssertEqual(session.groups[1].id, groupA.id, "A should now be at index 1")
+        XCTAssertEqual(session.groups[2].id, groupB.id, "B should now be at index 2")
+    }
+
+    func test_moveGroup_preserves_activeGroupID() {
+        // Arrange — [A, B, C], active = A. Reordering must not change which
+        // group is active — only its position.
+        let groupA = makeGroup(name: "A")
+        let groupB = makeGroup(name: "B")
+        let groupC = makeGroup(name: "C")
+        let session = WindowSession(groups: [groupA, groupB, groupC], activeGroupID: groupA.id)
+
+        // Act — move the active group itself
+        session.moveGroup(fromIndex: 0, toIndex: 2)
+
+        // Assert
+        XCTAssertEqual(session.activeGroupID, groupA.id,
+                       "activeGroupID should still point at A after it moves position")
+        XCTAssertEqual(session.groups.last?.id, groupA.id, "A should now be last")
+    }
+
+    func test_should_be_noop_when_moveGroup_sameIndex() {
+        // Arrange — [A, B]
+        let groupA = makeGroup(name: "A")
+        let groupB = makeGroup(name: "B")
+        let session = WindowSession(groups: [groupA, groupB], activeGroupID: groupA.id)
+
+        // Act — move index 1 to index 1 (no-op)
+        session.moveGroup(fromIndex: 1, toIndex: 1)
+
+        // Assert
+        XCTAssertEqual(session.groups[0].id, groupA.id)
+        XCTAssertEqual(session.groups[1].id, groupB.id)
+    }
+
+    func test_should_be_noop_when_moveGroup_outOfBounds() {
+        // Arrange — [A, B]
+        let groupA = makeGroup(name: "A")
+        let groupB = makeGroup(name: "B")
+        let session = WindowSession(groups: [groupA, groupB], activeGroupID: groupA.id)
+
+        // Act — invalid fromIndex
+        session.moveGroup(fromIndex: 5, toIndex: 0)
+
+        // Assert — no change
+        XCTAssertEqual(session.groups[0].id, groupA.id)
+        XCTAssertEqual(session.groups[1].id, groupB.id)
+    }
 }

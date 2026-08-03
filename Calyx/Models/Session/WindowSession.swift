@@ -198,4 +198,13 @@ class WindowSession: Identifiable {
         let prevIndex = (currentIndex - 1 + groups.count) % groups.count
         activeGroupID = groups[prevIndex].id
     }
+
+    func moveGroup(fromIndex: Int, toIndex: Int) {
+        guard fromIndex != toIndex,
+              groups.indices.contains(fromIndex),
+              toIndex >= 0, toIndex < groups.count else { return }
+
+        let group = groups.remove(at: fromIndex)
+        groups.insert(group, at: toIndex)
+    }
 }

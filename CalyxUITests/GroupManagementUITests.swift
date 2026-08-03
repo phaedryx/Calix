@@ -274,6 +274,48 @@ final class GroupManagementUITests: CalyxUITestCase {
 
     // MARK: - Group Drag Reorder Tests
 
+    /// Sidebar group header elements (identifier `calyx.sidebar.group.<UUID>`,
+    /// excluding the close-all/collapse buttons that share the same prefix)
+    /// sorted top-to-bottom by frame, mirroring
+    /// `TabReorderUITests.sidebarTabsByPosition()`.
+    private func sidebarGroupsByPosition() -> [XCUIElement] {
+        let query = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'calyx.sidebar.group.' AND NOT identifier CONTAINS '.closeAllButton' AND NOT identifier CONTAINS '.collapseButton'"))
+        return (0..<query.count)
+            .map { query.element(boundBy: $0) }
+            .sorted { $0.frame.minY < $1.frame.minY }
+    }
+
+    func test_dragSidebarGroup_reordersCorrectly() {
+        // Arrange: create 3 groups total
+        createSecondGroup()
+        createThirdGroup()
+
+        let groupsBefore = sidebarGroupsByPosition()
+        XCTAssertEqual(groupsBefore.count, 3, "Should have 3 groups before drag")
+        let originalFirstGroupID = groupsBefore[0].identifier
+        let thirdGroupElement = groupsBefore[2]
+
+        // Act: drag the first group header down past the third
+        groupsBefore[0].press(forDuration: 0.2, thenDragTo: thirdGroupElement)
+
+        // Allow the reorder animation to settle
+        Thread.sleep(forTimeInterval: 1.0)
+
+        // Assert: a different group should now occupy index 0
+        let groupsAfter = sidebarGroupsByPosition()
+        XCTAssertEqual(groupsAfter.count, 3, "Group count should be unchanged after drag")
+        XCTAssertNotEqual(
+            groupsAfter[0].identifier, originalFirstGroupID,
+            "After dragging the first group past the third, a different group should now occupy index 0"
+        )
+
+        // The original first group should now be at a later index
+        let movedToLaterIndex = groupsAfter[1].identifier == originalFirstGroupID
+            || groupsAfter[2].identifier == originalFirstGroupID
+        XCTAssertTrue(movedToLaterIndex, "The original first group should have moved to index 1 or 2")
+    }
+
     // MARK: - Group Collapse/Expand Tests
 
     func test_collapseGroupHidesTabs() {

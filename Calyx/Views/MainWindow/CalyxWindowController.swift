@@ -1096,6 +1096,12 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
                 self.refreshHostingView()
                 self.requestSave()
             },
+            onMoveGroup: { [weak self] fromIndex, toIndex in
+                guard let self else { return }
+                self.windowSession.moveGroup(fromIndex: fromIndex, toIndex: toIndex)
+                self.refreshHostingView()
+                self.requestSave()
+            },
             onSidebarDragCommitted: { [weak self] in self?.requestSave() },
             onSubmitReview: { [weak self] in
                 guard let self, let tab = self.activeTab else { return }

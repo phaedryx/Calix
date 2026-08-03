@@ -53,6 +53,7 @@ struct MainContentView: View {
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?  // (groupID, fromIndex, toIndex)
+    var onMoveGroup: ((Int, Int) -> Void)?  // (fromIndex, toIndex)
     var onSidebarDragCommitted: (() -> Void)?
     var onSubmitReview: (() -> Void)?
     var onDiscardReview: (() -> Void)?
@@ -150,7 +151,8 @@ struct MainContentView: View {
                         onRefreshGitStatus: onRefreshGitStatus,
                         onLoadMoreCommits: onLoadMoreCommits,
                         onExpandCommit: onExpandCommit,
-                        onMoveTab: onMoveTab
+                        onMoveTab: onMoveTab,
+                        onMoveGroup: onMoveGroup
                     )
                     .frame(width: windowSession.sidebarWidth)
                     .overlay(alignment: .trailing) {

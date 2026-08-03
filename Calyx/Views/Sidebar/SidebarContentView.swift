@@ -30,10 +30,12 @@ struct SidebarContentView: View {
     var onLoadMoreCommits: (() -> Void)?
     var onExpandCommit: ((String) -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?
+    var onMoveGroup: ((Int, Int) -> Void)?
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.controlActiveState) private var controlActiveState
     @Namespace private var togglePillNS
+    @State private var groupReorderState = TabReorderState()
 
     @ViewBuilder
     private var togglePill: some View {
@@ -150,7 +152,7 @@ struct SidebarContentView: View {
             case .tabs:
                 ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(groups) { group in
+                        ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                             GroupSectionView(
                                 group: group,
                                 isActiveGroup: group.id == activeGroupID,
@@ -163,9 +165,56 @@ struct SidebarContentView: View {
                                 onTabRenamed: onTabRenamed,
                                 onCollapseToggled: onCollapseToggled,
                                 onCloseAllTabsInGroup: onCloseAllTabsInGroup,
-                                onMoveTab: onMoveTab
+                                onMoveTab: onMoveTab,
+                                onGroupDragChanged: { translation in
+                                    guard groups.count > 1, onMoveGroup != nil else { return }
+                                    if groupReorderState.draggedTabID == nil {
+                                        groupReorderState.draggedTabID = group.id
+                                        groupReorderState.draggedTabIndex = index
+                                    }
+                                    groupReorderState.dragOffset = translation.height
+                                    if let frame = groupReorderState.tabFrames[group.id] {
+                                        let midpoint = frame.midY + translation.height
+                                        groupReorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                    }
+                                },
+                                onGroupDragEnded: {
+                                    let moveFrom = groupReorderState.draggedTabIndex
+                                    let moveTo = moveFrom.flatMap { groupReorderState.destinationIndex(fromIndex: $0, tabCount: groups.count) }
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        groupReorderState.reset()
+                                    }
+                                    if let from = moveFrom, let to = moveTo {
+                                        onMoveGroup?(from, to)
+                                    }
+                                }
                             )
+                            .background(
+                                GeometryReader { geo in
+                                    Color.clear.preference(
+                                        key: TabFramePreferenceKey.self,
+                                        value: [group.id: geo.frame(in: .named("sidebarGroups"))]
+                                    )
+                                }
+                            )
+                            .offset(y: groupReorderState.draggedTabID == group.id ? groupReorderState.dragOffset : 0)
+                            .zIndex(groupReorderState.draggedTabID == group.id ? 1 : 0)
+                            .scaleEffect(groupReorderState.draggedTabID == group.id ? 1.02 : 1.0)
+                            .shadow(color: .black.opacity(groupReorderState.draggedTabID == group.id ? 0.15 : 0), radius: 8)
                         }
+                    }
+                    .coordinateSpace(name: "sidebarGroups")
+                    .onPreferenceChange(TabFramePreferenceKey.self) { frames in
+                        groupReorderState.tabFrames = frames
+                    }
+                    .overlay {
+                        if let slot = groupReorderState.insertionSlot,
+                           groupReorderState.draggedTabID != nil {
+                            groupInsertionIndicator(slot: slot)
+                        }
+                    }
+                    .onChange(of: groups.map(\.id)) { _, _ in
+                        groupReorderState.reset()
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -212,6 +261,30 @@ struct SidebarContentView: View {
         .frame(minWidth: SidebarLayout.minWidth)
         .modifier(SidebarBackgroundModifier(reduceTransparency: reduceTransparency))
         .accessibilityIdentifier(AccessibilityID.Sidebar.container)
+    }
+
+    // MARK: - Group Insertion Indicator
+
+    private func groupInsertionIndicator(slot: Int) -> some View {
+        GeometryReader { geo in
+            let sortedFrames = groupReorderState.tabFrames.values.sorted { $0.minY < $1.minY }
+            let yPos: CGFloat = {
+                if slot == 0 {
+                    return sortedFrames.first?.minY ?? 0
+                } else if slot >= sortedFrames.count {
+                    return sortedFrames.last?.maxY ?? geo.size.height
+                } else {
+                    let prev = sortedFrames[slot - 1]
+                    let next = sortedFrames[slot]
+                    return (prev.maxY + next.minY) / 2
+                }
+            }()
+            RoundedRectangle(cornerRadius: 1)
+                .fill(Color.accentColor.opacity(0.8))
+                .frame(width: geo.size.width - 28, height: 2)
+                .position(x: geo.size.width / 2, y: yPos)
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -281,6 +354,8 @@ private struct GroupSectionView: View {
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?
+    var onGroupDragChanged: ((CGSize) -> Void)?
+    var onGroupDragEnded: (() -> Void)?
 
     @State private var isEditing = false
     @State private var isHoveringHeader = false
@@ -326,7 +401,9 @@ private struct GroupSectionView: View {
                 TabClickContainer(
                     isEnabled: !isEditing,
                     onSingleClick: { onGroupSelected?(group.id) },
-                    onDoubleClick: { isEditing = true }
+                    onDoubleClick: { isEditing = true },
+                    onDragChanged: onGroupDragChanged,
+                    onDragEnded: onGroupDragEnded
                 ) {
                     HStack(spacing: 0) {
                         // Left: group name area (visual content only; click
