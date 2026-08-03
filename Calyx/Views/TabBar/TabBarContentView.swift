@@ -458,6 +458,9 @@ private struct TabItemButton: View {
             ))
         }
         .onHover { isHovering = $0 }
+        .onChange(of: tab.renameRequestID) { _, newValue in
+            if newValue != nil { isEditing = true }
+        }
         // The tab body is hosted inside an `NSHostingView` (via
         // `TabClickContainer`), whose AppKit subtree owns the
         // accessibility children. Without an explicit container element a
