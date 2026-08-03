@@ -192,7 +192,7 @@ struct SidebarContentView: View {
                             .background(
                                 GeometryReader { geo in
                                     Color.clear.preference(
-                                        key: TabFramePreferenceKey.self,
+                                        key: GroupFramePreferenceKey.self,
                                         value: [group.id: geo.frame(in: .named("sidebarGroups"))]
                                     )
                                 }
@@ -204,7 +204,7 @@ struct SidebarContentView: View {
                         }
                     }
                     .coordinateSpace(name: "sidebarGroups")
-                    .onPreferenceChange(TabFramePreferenceKey.self) { frames in
+                    .onPreferenceChange(GroupFramePreferenceKey.self) { frames in
                         groupReorderState.tabFrames = frames
                     }
                     .overlay {

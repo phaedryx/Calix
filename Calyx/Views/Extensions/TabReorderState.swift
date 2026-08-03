@@ -105,3 +105,18 @@ struct TabFramePreferenceKey: PreferenceKey {
         value.merge(nextValue(), uniquingKeysWith: { $1 })
     }
 }
+
+// MARK: - GroupFramePreferenceKey
+
+/// Distinct from `TabFramePreferenceKey` so a group header's frame doesn't
+/// merge with the frames its own (or any other group's) tab rows report via
+/// that key — preference values bubble up past intermediate
+/// `.onPreferenceChange` listeners, so sharing one key type would pollute
+/// the group-reorder frame set with every tab row's frame too.
+struct GroupFramePreferenceKey: PreferenceKey {
+    nonisolated(unsafe) static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
