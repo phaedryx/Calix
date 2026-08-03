@@ -2100,6 +2100,8 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
                            name: .ghosttyShowChildExited, object: nil)
         center.addObserver(self, selector: #selector(handleConfirmingQuitDidEnd(_:)),
                            name: .calyxConfirmingQuitDidEnd, object: nil)
+        center.addObserver(self, selector: #selector(handleToggleFullscreenNotification(_:)),
+                           name: .ghosttyToggleFullscreen, object: nil)
     }
 
     // MARK: - Screen State Polling (Herdr Layer 2)
@@ -3194,6 +3196,19 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }
         parentWindow.beginSheet(sheet) { [weak self] _ in
             self?.clipboardConfirmationController = nil
+        }
+    }
+
+    @objc private func handleToggleFullscreenNotification(_ notification: Notification) {
+        guard let surfaceView = notification.object as? SurfaceView else { return }
+        guard belongsToThisWindow(surfaceView) else { return }
+
+        // ghostty fires this notification from its internal callback thread.
+        // Window fullscreen transitions must happen on the main queue.
+        DispatchQueue.main.async { [weak self] in
+            guard let window = self?.window else { return }
+            logger.info("Toggling fullscreen from ghosttyToggleFullscreen notification")
+            window.toggleFullScreen(nil)
         }
     }
 
