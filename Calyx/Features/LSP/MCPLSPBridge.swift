@@ -1541,7 +1541,7 @@ enum DocumentHighlightTool: SimpleLSPTool {
 
 // MARK: - DocumentSymbolTool
 
-enum DocumentSymbolTool: MCPLSPTool {
+enum DocumentSymbolTool: SimpleLSPTool {
     static let name = "lsp_document_symbol"
     static let description = "Return the symbol tree (classes, functions, etc.) for a single file."
     static let inputSchema: [String: AnyCodable] = {
@@ -1557,31 +1557,15 @@ enum DocumentSymbolTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "textDocument/documentSymbol"
+    typealias Result = DocumentSymbolResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentSymbolParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DocumentSymbolParams(
-            textDocument: TextDocumentIdentifier(uri: uri)
-        )
-        do {
-            let result: DocumentSymbolResult? = try await session.sendRequest(
-                method: "textDocument/documentSymbol",
-                params: params,
-                resultType: DocumentSymbolResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DocumentSymbolParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
@@ -1875,7 +1859,7 @@ enum CodeActionTool: MCPLSPTool {
 
 // MARK: - DiagnosticsTool
 
-enum DiagnosticsTool: MCPLSPTool {
+enum DiagnosticsTool: SimpleLSPTool {
     static let name = "lsp_diagnostics"
     static let description = "Pull the current diagnostics for a file (textDocument/diagnostic)."
     static let inputSchema: [String: AnyCodable] = {
@@ -1893,18 +1877,14 @@ enum DiagnosticsTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "textDocument/diagnostic"
+    typealias Result = DocumentDiagnosticReport?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentDiagnosticParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let identifier = try MCPLSPBridge.optionalString(arguments: arguments, key: "identifier")
         let previousResultId = try MCPLSPBridge.optionalString(
             arguments: arguments,
@@ -1915,16 +1895,7 @@ enum DiagnosticsTool: MCPLSPTool {
             identifier: identifier,
             previousResultId: previousResultId
         )
-        do {
-            let result: DocumentDiagnosticReport? = try await session.sendRequest(
-                method: "textDocument/diagnostic",
-                params: params,
-                resultType: DocumentDiagnosticReport?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
@@ -2381,33 +2352,19 @@ enum MonikerTool: SimpleLSPTool {
 
 // MARK: - CodeLensTool
 
-enum CodeLensTool: MCPLSPTool {
+enum CodeLensTool: SimpleLSPTool {
     static let name = "lsp_code_lens"
     static let description = "Get code lens entries (e.g. references, run/debug actions) for a document."
     static let inputSchema: [String: AnyCodable] = fileOnlySchema()
+    static let method = "textDocument/codeLens"
+    typealias Result = [CodeLens]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CodeLensParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = CodeLensParams(textDocument: TextDocumentIdentifier(uri: uri))
-        do {
-            let result: [CodeLens]? = try await session.sendRequest(
-                method: "textDocument/codeLens",
-                params: params,
-                resultType: [CodeLens]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, CodeLensParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
@@ -2627,33 +2584,19 @@ enum InlineValueTool: MCPLSPTool {
 
 // MARK: - FoldingRangeTool
 
-enum FoldingRangeTool: MCPLSPTool {
+enum FoldingRangeTool: SimpleLSPTool {
     static let name = "lsp_folding_range"
     static let description = "Get folding ranges (regions, imports, comments) for a document."
     static let inputSchema: [String: AnyCodable] = fileOnlySchema()
+    static let method = "textDocument/foldingRange"
+    typealias Result = [FoldingRange]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: FoldingRangeParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = FoldingRangeParams(textDocument: TextDocumentIdentifier(uri: uri))
-        do {
-            let result: [FoldingRange]? = try await session.sendRequest(
-                method: "textDocument/foldingRange",
-                params: params,
-                resultType: [FoldingRange]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, FoldingRangeParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
@@ -2750,35 +2693,19 @@ enum SelectionRangeTool: MCPLSPTool {
 
 // MARK: - SemanticTokensFullTool
 
-enum SemanticTokensFullTool: MCPLSPTool {
+enum SemanticTokensFullTool: SimpleLSPTool {
     static let name = "lsp_semantic_tokens_full"
     static let description = "Get semantic tokens for a whole document (textDocument/semanticTokens/full)."
     static let inputSchema: [String: AnyCodable] = fileOnlySchema()
+    static let method = "textDocument/semanticTokens/full"
+    typealias Result = SemanticTokens?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: SemanticTokensParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = SemanticTokensParams(
-            textDocument: TextDocumentIdentifier(uri: uri)
-        )
-        do {
-            let result: SemanticTokens? = try await session.sendRequest(
-                method: "textDocument/semanticTokens/full",
-                params: params,
-                resultType: SemanticTokens?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, SemanticTokensParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
@@ -2819,7 +2746,7 @@ enum SemanticTokensRangeTool: MCPLSPTool {
 
 // MARK: - SemanticTokensDeltaTool
 
-enum SemanticTokensDeltaTool: MCPLSPTool {
+enum SemanticTokensDeltaTool: SimpleLSPTool {
     static let name = "lsp_semantic_tokens_delta"
     static let description = "Get a delta of semantic tokens against a previous result id (textDocument/semanticTokens/full/delta)."
     static let inputSchema: [String: AnyCodable] = {
@@ -2839,18 +2766,14 @@ enum SemanticTokensDeltaTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "textDocument/semanticTokens/full/delta"
+    typealias Result = SemanticTokensDeltaResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: SemanticTokensDeltaParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let previousResultId = try MCPLSPBridge.requireString(
             arguments: arguments,
             key: "previous_result_id"
@@ -2859,16 +2782,7 @@ enum SemanticTokensDeltaTool: MCPLSPTool {
             textDocument: TextDocumentIdentifier(uri: uri),
             previousResultId: previousResultId
         )
-        do {
-            let result: SemanticTokensDeltaResult? = try await session.sendRequest(
-                method: "textDocument/semanticTokens/full/delta",
-                params: params,
-                resultType: SemanticTokensDeltaResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
@@ -2892,35 +2806,19 @@ enum LinkedEditingRangeTool: SimpleLSPTool {
 
 // MARK: - DocumentLinkTool
 
-enum DocumentLinkTool: MCPLSPTool {
+enum DocumentLinkTool: SimpleLSPTool {
     static let name = "lsp_document_link"
     static let description = "Get document links (e.g. import paths, URLs) for a document."
     static let inputSchema: [String: AnyCodable] = fileOnlySchema()
+    static let method = "textDocument/documentLink"
+    typealias Result = [DocumentLink]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentLinkParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DocumentLinkParams(
-            textDocument: TextDocumentIdentifier(uri: uri)
-        )
-        do {
-            let result: [DocumentLink]? = try await session.sendRequest(
-                method: "textDocument/documentLink",
-                params: params,
-                resultType: [DocumentLink]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DocumentLinkParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
@@ -2966,35 +2864,19 @@ enum DocumentLinkResolveTool: MCPLSPTool {
 
 // MARK: - DocumentColorTool
 
-enum DocumentColorTool: MCPLSPTool {
+enum DocumentColorTool: SimpleLSPTool {
     static let name = "lsp_document_color"
     static let description = "Get color references in a document for color presentation pickers."
     static let inputSchema: [String: AnyCodable] = fileOnlySchema()
+    static let method = "textDocument/documentColor"
+    typealias Result = [ColorInformation]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentColorParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DocumentColorParams(
-            textDocument: TextDocumentIdentifier(uri: uri)
-        )
-        do {
-            let result: [ColorInformation]? = try await session.sendRequest(
-                method: "textDocument/documentColor",
-                params: params,
-                resultType: [ColorInformation]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DocumentColorParams(textDocument: TextDocumentIdentifier(uri: uri)))
     }
 }
 
