@@ -2844,104 +2844,74 @@ enum CodeActionResolveTool: SimpleLSPTool {
 
 // MARK: - FormattingTool
 
-enum FormattingTool: MCPLSPTool {
+enum FormattingTool: SimpleLSPTool {
     static let name = "lsp_formatting"
     static let description = "Format a whole document (textDocument/formatting)."
     static let inputSchema: [String: AnyCodable] = formattingSchema(
         includeRange: false,
         includePositionAndCh: false
     )
+    static let method = "textDocument/formatting"
+    typealias Result = [TextEdit]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentFormattingParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let options = try extractFormattingOptions(arguments: arguments)
         let params = DocumentFormattingParams(
             textDocument: TextDocumentIdentifier(uri: uri),
             options: options
         )
-        do {
-            let result: [TextEdit]? = try await session.sendRequest(
-                method: "textDocument/formatting",
-                params: params,
-                resultType: [TextEdit]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
 // MARK: - RangeFormattingTool
 
-enum RangeFormattingTool: MCPLSPTool {
+enum RangeFormattingTool: SimpleLSPTool {
     static let name = "lsp_range_formatting"
     static let description = "Format a range in a document (textDocument/rangeFormatting)."
     static let inputSchema: [String: AnyCodable] = formattingSchema(
         includeRange: true,
         includePositionAndCh: false
     )
+    static let method = "textDocument/rangeFormatting"
+    typealias Result = [TextEdit]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentRangeFormattingParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let options = try extractFormattingOptions(arguments: arguments)
         let params = DocumentRangeFormattingParams(
             textDocument: TextDocumentIdentifier(uri: uri),
             range: range,
             options: options
         )
-        do {
-            let result: [TextEdit]? = try await session.sendRequest(
-                method: "textDocument/rangeFormatting",
-                params: params,
-                resultType: [TextEdit]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
 // MARK: - OnTypeFormattingTool
 
-enum OnTypeFormattingTool: MCPLSPTool {
+enum OnTypeFormattingTool: SimpleLSPTool {
     static let name = "lsp_on_type_formatting"
     static let description = "Format around the character typed at a position (textDocument/onTypeFormatting)."
     static let inputSchema: [String: AnyCodable] = formattingSchema(
         includeRange: false,
         includePositionAndCh: true
     )
+    static let method = "textDocument/onTypeFormatting"
+    typealias Result = [TextEdit]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentOnTypeFormattingParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let ch = try MCPLSPBridge.requireString(arguments: arguments, key: "ch")
         let options = try extractFormattingOptions(arguments: arguments)
         let params = DocumentOnTypeFormattingParams(
@@ -2950,16 +2920,7 @@ enum OnTypeFormattingTool: MCPLSPTool {
             ch: ch,
             options: options
         )
-        do {
-            let result: [TextEdit]? = try await session.sendRequest(
-                method: "textDocument/onTypeFormatting",
-                params: params,
-                resultType: [TextEdit]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
