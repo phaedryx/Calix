@@ -1489,7 +1489,7 @@ enum ImplementationTool: SimpleLSPTool {
 
 // MARK: - ReferencesTool
 
-enum ReferencesTool: MCPLSPTool {
+enum ReferencesTool: SimpleLSPTool {
     static let name = "lsp_references"
     static let description = "Find all references to the symbol at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema(
@@ -1500,18 +1500,14 @@ enum ReferencesTool: MCPLSPTool {
             ),
         ]
     )
+    static let method = "textDocument/references"
+    typealias Result = [Location]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: ReferenceParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let includeDecl = try MCPLSPBridge.optionalBool(
             arguments: arguments,
             key: "include_declaration"
@@ -1521,16 +1517,7 @@ enum ReferencesTool: MCPLSPTool {
             position: position,
             context: ReferenceContext(includeDeclaration: includeDecl)
         )
-        do {
-            let result: [Location]? = try await session.sendRequest(
-                method: "textDocument/references",
-                params: params,
-                resultType: [Location]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
@@ -1752,7 +1739,7 @@ enum PrepareRenameTool: SimpleLSPTool {
 
 // MARK: - RenameTool
 
-enum RenameTool: MCPLSPTool {
+enum RenameTool: SimpleLSPTool {
     static let name = "lsp_rename"
     static let description = "Rename the symbol at a position across the workspace."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema(
@@ -1761,34 +1748,21 @@ enum RenameTool: MCPLSPTool {
         ],
         extraRequired: ["new_name"]
     )
+    static let method = "textDocument/rename"
+    typealias Result = WorkspaceEdit?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: RenameParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let newName = try MCPLSPBridge.requireString(arguments: arguments, key: "new_name")
         let params = RenameParams(
             textDocument: TextDocumentIdentifier(uri: uri),
             position: position,
             newName: newName
         )
-        do {
-            let result: WorkspaceEdit? = try await session.sendRequest(
-                method: "textDocument/rename",
-                params: params,
-                resultType: WorkspaceEdit?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
