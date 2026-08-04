@@ -1,5 +1,5 @@
 //
-//  AppDelegateAgentResumeStalenessTests.swift
+//  AgentResumeAdvisorStalenessTests.swift
 //  CalyxTests
 //
 //  TDD Red phase, round 10 (r10-fix-spec.md, R10-B): AppDelegate
@@ -54,9 +54,9 @@ private final class CountingDaemonClient: SessionDaemonClientProtocol, @unchecke
 }
 
 @MainActor
-final class AppDelegateAgentResumeStalenessTests: XCTestCase {
+final class AgentResumeAdvisorStalenessTests: XCTestCase {
 
-    private let settingsSuiteName = "com.calyx.tests.AppDelegateAgentResumeStalenessTests"
+    private let settingsSuiteName = "com.calyx.tests.AgentResumeAdvisorStalenessTests"
 
     override func setUp() {
         super.setUp()
@@ -77,15 +77,15 @@ final class AppDelegateAgentResumeStalenessTests: XCTestCase {
     func test_fetchSessionsForAgentResume_secondFetchAfterCompletion_startsFreshDaemonCall() async throws {
         SessionSettings.agentResumeEnabled = true
         let client = CountingDaemonClient()
-        let appDelegate = AppDelegate()
-        appDelegate._sessionDaemonClientForTesting = client
+        let advisor = AgentResumeAdvisor()
+        advisor._sessionDaemonClientForTesting = client
 
-        appDelegate.fetchSessionsForAgentResume()
-        _ = await appDelegate.agentResumeSessionsTask?.value
+        advisor.fetchSessionsForAgentResume()
+        _ = await advisor.agentResumeSessionsTask?.value
         XCTAssertEqual(client.callCount, 1, "Precondition: the first fetch must reach the daemon exactly once")
 
-        appDelegate.fetchSessionsForAgentResume()
-        _ = await appDelegate.agentResumeSessionsTask?.value
+        advisor.fetchSessionsForAgentResume()
+        _ = await advisor.agentResumeSessionsTask?.value
 
         XCTAssertEqual(
             client.callCount, 2,
@@ -105,12 +105,12 @@ final class AppDelegateAgentResumeStalenessTests: XCTestCase {
     func test_fetchSessionsForAgentResume_twoCallsWhileUnresolved_dedupeToOneDaemonCall() async {
         SessionSettings.agentResumeEnabled = true
         let client = CountingDaemonClient()
-        let appDelegate = AppDelegate()
-        appDelegate._sessionDaemonClientForTesting = client
+        let advisor = AgentResumeAdvisor()
+        advisor._sessionDaemonClientForTesting = client
 
-        appDelegate.fetchSessionsForAgentResume()
-        appDelegate.fetchSessionsForAgentResume()
-        _ = await appDelegate.agentResumeSessionsTask?.value
+        advisor.fetchSessionsForAgentResume()
+        advisor.fetchSessionsForAgentResume()
+        _ = await advisor.agentResumeSessionsTask?.value
 
         XCTAssertEqual(
             client.callCount, 1,

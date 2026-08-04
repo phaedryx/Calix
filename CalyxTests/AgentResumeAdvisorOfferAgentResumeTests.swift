@@ -1,5 +1,5 @@
 //
-//  AppDelegateOfferAgentResumeTests.swift
+//  AgentResumeAdvisorOfferAgentResumeTests.swift
 //  CalyxTests
 //
 //  TDD Red phase for round-4 fix F14 (r4-fix-spec.md; evidence in
@@ -35,9 +35,9 @@ import XCTest
 @testable import Calyx
 
 @MainActor
-final class AppDelegateOfferAgentResumeTests: XCTestCase {
+final class AgentResumeAdvisorOfferAgentResumeTests: XCTestCase {
 
-    private let settingsSuiteName = "com.calyx.tests.AppDelegateOfferAgentResumeTests"
+    private let settingsSuiteName = "com.calyx.tests.AgentResumeAdvisorOfferAgentResumeTests"
 
     override func setUp() {
         super.setUp()
@@ -76,9 +76,9 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
         SessionSettings.agentResumeEnabled = true
         SessionSettings.agentResumeAutoExecute = false
 
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         var capturedCalls: [(surfaceID: UUID, text: String)] = []
-        appDelegate._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
+        advisor._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
             capturedCalls.append((surfaceID, text))
         }
 
@@ -93,7 +93,7 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
             )
         ]
 
-        appDelegate.offerAgentResume(tab: tab, surfaceID: surfaceID, sessionID: sessionID, sessions: sessions)
+        advisor.offerAgentResume(tab: tab, surfaceID: surfaceID, sessionID: sessionID, sessions: sessions)
         await waitForHook()
 
         let expectedInput = try XCTUnwrap(SessionResumePlanner.initialInput(
@@ -111,9 +111,9 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
     func test_offerAgentResume_noResumableMeta_neverSends() async throws {
         SessionSettings.agentResumeEnabled = true
 
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         var capturedCalls: [(surfaceID: UUID, text: String)] = []
-        appDelegate._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
+        advisor._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
             capturedCalls.append((surfaceID, text))
         }
 
@@ -121,7 +121,7 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
         let tab = Tab()
         let sessions = [sessionID: makeSessionInfo(id: sessionID, meta: [:])]
 
-        appDelegate.offerAgentResume(tab: tab, surfaceID: UUID(), sessionID: sessionID, sessions: sessions)
+        advisor.offerAgentResume(tab: tab, surfaceID: UUID(), sessionID: sessionID, sessions: sessions)
         await waitForHook()
 
         XCTAssertTrue(capturedCalls.isEmpty,
@@ -132,9 +132,9 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
     func test_offerAgentResume_agentResumeDisabled_neverSends() async throws {
         SessionSettings.agentResumeEnabled = false
 
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         var capturedCalls: [(surfaceID: UUID, text: String)] = []
-        appDelegate._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
+        advisor._offerAgentResumeSendTextHookForTesting = { surfaceID, text in
             capturedCalls.append((surfaceID, text))
         }
 
@@ -147,7 +147,7 @@ final class AppDelegateOfferAgentResumeTests: XCTestCase {
             )
         ]
 
-        appDelegate.offerAgentResume(tab: tab, surfaceID: UUID(), sessionID: sessionID, sessions: sessions)
+        advisor.offerAgentResume(tab: tab, surfaceID: UUID(), sessionID: sessionID, sessions: sessions)
         await waitForHook()
 
         XCTAssertTrue(capturedCalls.isEmpty,

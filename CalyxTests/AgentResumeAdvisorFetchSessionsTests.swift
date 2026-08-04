@@ -1,5 +1,5 @@
 //
-//  AppDelegateFetchSessionsForAgentResumeTests.swift
+//  AgentResumeAdvisorFetchSessionsTests.swift
 //  CalyxTests
 //
 //  TDD Red phase for round-6 fix R6-C (r6-fix-spec.md; CONFIRMED
@@ -36,9 +36,9 @@ import XCTest
 @testable import Calyx
 
 @MainActor
-final class AppDelegateFetchSessionsForAgentResumeTests: XCTestCase {
+final class AgentResumeAdvisorFetchSessionsTests: XCTestCase {
 
-    private let settingsSuiteName = "com.calyx.tests.AppDelegateFetchSessionsForAgentResumeTests"
+    private let settingsSuiteName = "com.calyx.tests.AgentResumeAdvisorFetchSessionsTests"
 
     override func setUp() {
         super.setUp()
@@ -91,11 +91,11 @@ final class AppDelegateFetchSessionsForAgentResumeTests: XCTestCase {
     func test_fetchSessionsForAgentResume_doesNotBlockOnUnresponsiveDaemon() {
         SessionSettings.agentResumeEnabled = true
 
-        let appDelegate = AppDelegate()
-        appDelegate._sessionDaemonClientForTesting = NeverRespondingDaemonClient()
+        let advisor = AgentResumeAdvisor()
+        advisor._sessionDaemonClientForTesting = NeverRespondingDaemonClient()
 
         let start = Date()
-        appDelegate.fetchSessionsForAgentResume()
+        advisor.fetchSessionsForAgentResume()
         let elapsed = Date().timeIntervalSince(start)
 
         XCTAssertLessThan(elapsed, 0.5,
@@ -106,7 +106,7 @@ final class AppDelegateFetchSessionsForAgentResumeTests: XCTestCase {
         // G5 (r8-fix-spec.md): fetchSessionsForAgentResume returns Void
         // now (its old return value was always [:], never meaningful);
         // observe the shared task itself instead.
-        XCTAssertNotNil(appDelegate.agentResumeSessionsTask,
+        XCTAssertNotNil(advisor.agentResumeSessionsTask,
                         "fetchSessionsForAgentResume must still start the shared fetch task even though it " +
                         "no longer returns a synchronous result, callers await the task itself")
     }

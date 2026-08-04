@@ -1,5 +1,5 @@
 //
-//  AppDelegateReassertHistoryPersistenceTests.swift
+//  AgentResumeAdvisorReassertHistoryPersistenceTests.swift
 //  CalyxTests
 //
 //  TDD Red phase, P6 RED2 (R-B4): the attach-spawned calyx-session
@@ -60,9 +60,9 @@ import XCTest
 @testable import Calyx
 
 @MainActor
-final class AppDelegateReassertHistoryPersistenceTests: XCTestCase {
+final class AgentResumeAdvisorReassertHistoryPersistenceTests: XCTestCase {
 
-    private let settingsSuiteName = "com.calyx.tests.AppDelegateReassertHistoryPersistenceTests"
+    private let settingsSuiteName = "com.calyx.tests.AgentResumeAdvisorReassertHistoryPersistenceTests"
 
     override func setUp() {
         super.setUp()
@@ -107,11 +107,11 @@ final class AppDelegateReassertHistoryPersistenceTests: XCTestCase {
     func test_bothSettingsOn_reassertsHistoryEnabledOnceAtLaunch() async {
         SessionSettings.persistentSessionsEnabled = true
         SessionSettings.historyPersistenceEnabled = true
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         let client = RecordingDaemonClient()
-        appDelegate._sessionDaemonClientForTesting = client
+        advisor._sessionDaemonClientForTesting = client
 
-        await appDelegate.reassertHistoryPersistenceIfNeeded()
+        await advisor.reassertHistoryPersistenceIfNeeded()
 
         XCTAssertEqual(client.recordedCalls, [true],
                       "with persistentSessionsEnabled and historyPersistenceEnabled both on, launch must " +
@@ -121,11 +121,11 @@ final class AppDelegateReassertHistoryPersistenceTests: XCTestCase {
     func test_historyPersistenceDisabled_neverCallsDaemon() async {
         SessionSettings.persistentSessionsEnabled = true
         SessionSettings.historyPersistenceEnabled = false
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         let client = RecordingDaemonClient()
-        appDelegate._sessionDaemonClientForTesting = client
+        advisor._sessionDaemonClientForTesting = client
 
-        await appDelegate.reassertHistoryPersistenceIfNeeded()
+        await advisor.reassertHistoryPersistenceIfNeeded()
 
         XCTAssertTrue(client.recordedCalls.isEmpty,
                      "with historyPersistenceEnabled off, launch must never call setHistoryEnabled at all")
@@ -134,11 +134,11 @@ final class AppDelegateReassertHistoryPersistenceTests: XCTestCase {
     func test_persistentSessionsDisabled_neverCallsDaemonEvenIfHistoryPersistenceIsOn() async {
         SessionSettings.persistentSessionsEnabled = false
         SessionSettings.historyPersistenceEnabled = true
-        let appDelegate = AppDelegate()
+        let advisor = AgentResumeAdvisor()
         let client = RecordingDaemonClient()
-        appDelegate._sessionDaemonClientForTesting = client
+        advisor._sessionDaemonClientForTesting = client
 
-        await appDelegate.reassertHistoryPersistenceIfNeeded()
+        await advisor.reassertHistoryPersistenceIfNeeded()
 
         XCTAssertTrue(client.recordedCalls.isEmpty,
                      "with persistentSessionsEnabled off, no persistent-session daemon is ever spawned, so " +

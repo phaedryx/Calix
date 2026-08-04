@@ -92,8 +92,8 @@ final class AppDelegateOfferAgentResumePipelineBoundTests: XCTestCase {
         SessionSettings.agentResumeEnabled = true
 
         let appDelegate = AppDelegate()
-        appDelegate._sessionDaemonClientForTesting = NeverRespondingDaemonClient()
-        appDelegate.fetchSessionsForAgentResume()
+        appDelegate.agentResumeAdvisor._sessionDaemonClientForTesting = NeverRespondingDaemonClient()
+        appDelegate.agentResumeAdvisor.fetchSessionsForAgentResume()
 
         // CALYX_SESSION_BIN env override (SessionBinaryResolver's own
         // documented test-injection seam) makes
@@ -125,7 +125,7 @@ final class AppDelegateOfferAgentResumePipelineBoundTests: XCTestCase {
         defer { SessionSurfaceMap.shared.unregister(sessionID: sessionID) }
 
         var sendTextHookCallCount = 0
-        appDelegate._offerAgentResumeSendTextHookForTesting = { _, _ in sendTextHookCallCount += 1 }
+        appDelegate.agentResumeAdvisor._offerAgentResumeSendTextHookForTesting = { _, _ in sendTextHookCallCount += 1 }
 
         let completionExpectation = XCTestExpectation(
             description: "createSurfaceWithPwd's offer-agent-resume dispatch Task reaches a terminal state"
