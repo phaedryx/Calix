@@ -358,8 +358,8 @@ final class MCPLSPBridgeBugSpecGroupATests: XCTestCase {
     /// `file://` form is returned verbatim today, so they diverge.
     /// Contract: both forms must produce `file:///tmp/my%20project/main.ts`.
     func test_bug1_documentUri_spaceInPath_pathAndFileURIConverge() {
-        let asPath = MCPLSPBridge.documentUri(fromPathOrUri: "/tmp/my project/main.ts")
-        let asFileURI = MCPLSPBridge.documentUri(fromPathOrUri: "file:///tmp/my project/main.ts")
+        let asPath = MCPArgumentCoding.documentUri(fromPathOrUri: "/tmp/my project/main.ts")
+        let asFileURI = MCPArgumentCoding.documentUri(fromPathOrUri: "file:///tmp/my project/main.ts")
 
         XCTAssertEqual(
             asPath,
@@ -408,7 +408,7 @@ final class MCPLSPBridgeBugSpecGroupATests: XCTestCase {
         // Part 1: regression guard against the `/file:`-prefixed-.path
         // shape called out in the bug report. Currently a no-op on
         // Foundation Darwin 25.x but kept as a guard.
-        let spaceFromFileURI = MCPLSPBridge.fileURL(fromPathOrUri: "file:///tmp/my project/main.ts")
+        let spaceFromFileURI = MCPArgumentCoding.fileURL(fromPathOrUri: "file:///tmp/my project/main.ts")
         XCTAssertFalse(
             spaceFromFileURI.path.hasPrefix("/file:"),
             "fileURL must NOT yield a .path beginning with '/file:' (regression guard for older Foundation)"
@@ -416,8 +416,8 @@ final class MCPLSPBridgeBugSpecGroupATests: XCTestCase {
 
         // Part 2: the real divergence. A filename with `?` exposes the
         // mismatch between the two parser branches in `fileURL`.
-        let urlFromPath = MCPLSPBridge.fileURL(fromPathOrUri: "/tmp/my?file.ts")
-        let urlFromFileURI = MCPLSPBridge.fileURL(fromPathOrUri: "file:///tmp/my?file.ts")
+        let urlFromPath = MCPArgumentCoding.fileURL(fromPathOrUri: "/tmp/my?file.ts")
+        let urlFromFileURI = MCPArgumentCoding.fileURL(fromPathOrUri: "file:///tmp/my?file.ts")
 
         XCTAssertEqual(
             urlFromPath.path,

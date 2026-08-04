@@ -207,7 +207,7 @@ final class MCPLSPBridgeURIBugSpecTests: XCTestCase {
             // The contract: ensureFileOpen for a non-file scheme MUST
             // NOT throw. Any throw is a contract violation.
             do {
-                try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+                try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
             } catch {
                 XCTFail("ensureFileOpen for non-file URI \(uri) MUST NOT throw; got: \(error)")
                 continue
@@ -259,7 +259,7 @@ final class MCPLSPBridgeURIBugSpecTests: XCTestCase {
     ///     slash policy may differ — but BOTH substrings must appear.
     func test_normalizeFileURI_acceptsNonEmptyHost() {
         let input = "file://server/share/path/main.ts"
-        let result = MCPLSPBridge.normalizeFileURI(input)
+        let result = MCPArgumentCoding.normalizeFileURI(input)
 
         XCTAssertNotNil(
             result.fileURL,

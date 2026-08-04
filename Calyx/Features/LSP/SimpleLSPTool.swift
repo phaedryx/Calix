@@ -40,11 +40,11 @@ extension SimpleLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let (uri, params) = try makeParams(arguments: arguments, bridge: bridge)
         if let uri {
-            try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+            try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
         }
         do {
             let result: Result = try await session.sendRequest(
@@ -52,9 +52,9 @@ extension SimpleLSPTool {
                 params: params,
                 resultType: Result.self
             )
-            return try MCPLSPBridge.makeJSONContent(result)
+            return try MCPArgumentCoding.makeJSONContent(result)
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
     }
 }

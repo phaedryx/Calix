@@ -690,151 +690,29 @@ final class MCPLSPBridge {
     /// `language_id` keys in `arguments`. Throws if either is missing or
     /// malformed.
     func resolveSession(arguments: [String: AnyCodable]) async throws -> LSPSession {
-        let workspaceRootString = try MCPLSPBridge.requireString(
+        let workspaceRootString = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let languageId = try MCPLSPBridge.requireString(
+        let languageId = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "language_id"
         )
-        let workspaceURL = MCPLSPBridge.fileURL(fromPathOrUri: workspaceRootString)
+        let workspaceURL = MCPArgumentCoding.fileURL(fromPathOrUri: workspaceRootString)
         return try await service.session(
             for: workspaceURL,
             languageId: languageId
         )
     }
 
-    /// Pull `file`, `line`, `column` from `arguments` and build the
-    /// `(uri, position)` pair shared by every position-based LSP request.
     func extractPosition(arguments: [String: AnyCodable]) throws -> (uri: DocumentUri, position: Position) {
-        let file = try MCPLSPBridge.requireString(arguments: arguments, key: "file")
-        let line = try MCPLSPBridge.requireInt(arguments: arguments, key: "line")
-        let column = try MCPLSPBridge.requireInt(arguments: arguments, key: "column")
-        let uri = MCPLSPBridge.documentUri(fromPathOrUri: file)
-        return (uri, Position(line: line, character: column))
+        try MCPArgumentCoding.extractPosition(arguments: arguments)
     }
-
-    /// Pull just the `file` key (used by `documentSymbol`).
     func extractDocumentUri(arguments: [String: AnyCodable]) throws -> DocumentUri {
-        let file = try MCPLSPBridge.requireString(arguments: arguments, key: "file")
-        return MCPLSPBridge.documentUri(fromPathOrUri: file)
+        try MCPArgumentCoding.extractDocumentUri(arguments: arguments)
     }
-
-    /// Pull `file`, `start_line`, `start_column`, `end_line`, `end_column`
-    /// from `arguments` and build the `(uri, range)` pair shared by every
-    /// range-based LSP request (`lsp_code_action`, `lsp_inlay_hint`,
-    /// `lsp_inline_value`).
     func extractRange(arguments: [String: AnyCodable]) throws -> (uri: DocumentUri, range: LSPRange) {
-        let uri = try extractDocumentUri(arguments: arguments)
-        let startLine = try MCPLSPBridge.requireInt(arguments: arguments, key: "start_line")
-        let startCol = try MCPLSPBridge.requireInt(arguments: arguments, key: "start_column")
-        let endLine = try MCPLSPBridge.requireInt(arguments: arguments, key: "end_line")
-        let endCol = try MCPLSPBridge.requireInt(arguments: arguments, key: "end_column")
-        let range = LSPRange(
-            start: Position(line: startLine, character: startCol),
-            end: Position(line: endLine, character: endCol)
-        )
-        return (uri, range)
-    }
-
-    // MARK: - didOpen orchestration
-
-    /// Ensure that `uri` is registered as an open document on `session`
-    /// before a position/range/file-based LSP request is dispatched.
-    ///
-    /// Most language servers (sourcekit-lsp, gopls, rust-analyzer, the
-    /// TypeScript server, …) refuse to answer `textDocument/*` requests
-    /// for a URI that the client has not previously announced via
-    /// `textDocument/didOpen`; sourcekit-lsp surfaces the failure as the
-    /// `-32001 "No language service for '...' found"` JSON-RPC error.
-    /// MCP tool calls are stateless from the caller's point of view, so
-    /// the bridge has to lazily synthesise the didOpen on first contact.
-    ///
-    /// Behaviour:
-    ///   * No-op when the session already tracks the URI (idempotent).
-    ///   * No-op for non-`file://` URIs (`untitled:`, `jdt://`, …) — the
-    ///     bridge has no on-disk source to read for those.
-    ///   * No-op when the file does not exist or can't be read; the
-    ///     downstream request will surface a more informative error than
-    ///     "we failed before even asking the server."
-    ///   * Best-effort: any error from `session.didOpen` is silently
-    ///     absorbed so a missing didOpen never replaces the actual
-    ///     diagnostic the caller wanted (e.g. a server crash).
-    ///
-    /// `nonisolated static` so the per-tool handlers (which only carry an
-    /// `LSPSession` reference, not the `@MainActor` bridge) can call it
-    /// without an extra actor hop.
-    ///
-    /// Throws when the URI is truly unparseable (`normalizeFileURI` returns
-    /// nil for the file:// case), or when the file exists on disk but
-    /// cannot be decoded as text in any encoding (UTF-8 attempt followed by
-    /// `usedEncoding:` sniff). Non-file URIs (untitled:, jdt://, …) and
-    /// file URIs that point at a missing on-disk source are left as silent
-    /// no-ops so the downstream LSP request can produce its own diagnostic.
-    nonisolated static func ensureFileOpen(
-        session: LSPSession,
-        uri: DocumentUri
-    ) async throws {
-        // Idempotency guard: skip work when the URI is already tracked.
-        let openDocs = await session.openDocuments()
-        if openDocs.contains(uri) {
-            return
-        }
-
-        // Only file:// URIs map to a readable on-disk source. Anything
-        // else (untitled:, jdt://, vscode-notebook-cell:, …) is left
-        // alone — the caller is responsible for opening those via the
-        // bridge's notebook / explicit didOpen surface.
-        guard uri.hasPrefix("file://") else { return }
-
-        // Normalize via the shared helper so unparseable inputs surface
-        // as a structured error instead of a silent no-op.
-        let normalized = normalizeFileURI(uri)
-        guard let url = normalized.fileURL, url.isFileURL else {
-            throw MCPLSPBridgeError.invalidArgument(
-                name: "uri",
-                reason: "unparseable file URI: \(uri)"
-            )
-        }
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
-
-        // Try UTF-8 first; fall back to a tolerant `usedEncoding:` sniff
-        // so non-UTF-8 sources still surface a didOpen instead of a
-        // silent skip that hides the encoding issue behind a server-side
-        // "no language service" error. As a final safety net, attempt
-        // `isoLatin1` — every byte 0x00-0xFF maps to a Unicode codepoint
-        // in Latin-1, so the decode is guaranteed to succeed for any
-        // file that opens at all. The throw on the very last branch
-        // therefore only fires when even opening the file fails (e.g.
-        // permissions revoked between the existence check and the read).
-        let text: String
-        if let utf8 = try? String(contentsOf: url, encoding: .utf8) {
-            text = utf8
-        } else {
-            var used = String.Encoding.utf8
-            if let sniffed = try? String(contentsOf: url, usedEncoding: &used) {
-                text = sniffed
-            } else if let latin1 = try? String(contentsOf: url, encoding: .isoLatin1) {
-                text = latin1
-            } else {
-                throw MCPLSPBridgeError.invalidArgument(
-                    name: "uri",
-                    reason: "file not readable as text (utf-8 decode and encoding sniff both failed): \(uri)"
-                )
-            }
-        }
-
-        // Use the session's default languageId. `didOpen` is itself
-        // idempotent inside the session (it dedups on `openDocs`), so a
-        // race between two MCP tool calls that both reach this point
-        // before either has finished only sends one notification.
-        try? await session.didOpen(
-            uri: uri,
-            languageId: session.languageId,
-            version: 1,
-            text: text
-        )
+        try MCPArgumentCoding.extractRange(arguments: arguments)
     }
 
     // MARK: - Bridge-internal configuration store
@@ -861,336 +739,6 @@ final class MCPLSPBridge {
     /// same triple.
     func setWorkspaceConfiguration(key: String, value: AnyCodable) {
         configurationStore[key] = value
-    }
-
-    // MARK: - Argument coercion (nonisolated)
-
-    /// Decode the `AnyCodable` value at `key` as a `String`, throwing
-    /// `MCPLSPBridgeError.missingArgument` if absent and
-    /// `MCPLSPBridgeError.invalidArgument` if the underlying JSON is the
-    /// wrong shape.
-    nonisolated static func requireString(arguments: [String: AnyCodable], key: String) throws -> String {
-        guard let raw = arguments[key] else {
-            throw MCPLSPBridgeError.missingArgument(key)
-        }
-        guard let value: String = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected string")
-        }
-        return value
-    }
-
-    /// Decode the `AnyCodable` value at `key` as an `Int`.
-    nonisolated static func requireInt(arguments: [String: AnyCodable], key: String) throws -> Int {
-        guard let raw = arguments[key] else {
-            throw MCPLSPBridgeError.missingArgument(key)
-        }
-        guard let value: Int = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected integer")
-        }
-        return value
-    }
-
-    /// Decode an optional `Bool` argument; returns `nil` when absent.
-    nonisolated static func optionalBool(arguments: [String: AnyCodable], key: String) throws -> Bool? {
-        guard let raw = arguments[key] else { return nil }
-        guard let value: Bool = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected boolean")
-        }
-        return value
-    }
-
-    /// Decode a required `Bool` argument; throws `missingArgument` when
-    /// absent and `invalidArgument` when the underlying JSON is the wrong
-    /// shape (e.g. a stray integer or string instead of a boolean).
-    nonisolated static func requireBool(arguments: [String: AnyCodable], key: String) throws -> Bool {
-        guard let raw = arguments[key] else {
-            throw MCPLSPBridgeError.missingArgument(key)
-        }
-        guard let value: Bool = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected boolean")
-        }
-        return value
-    }
-
-    /// Decode an optional `Int` argument; returns `nil` when absent.
-    nonisolated static func optionalInt(arguments: [String: AnyCodable], key: String) throws -> Int? {
-        guard let raw = arguments[key] else { return nil }
-        guard let value: Int = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected integer")
-        }
-        return value
-    }
-
-    /// Decode an optional `String` argument; returns `nil` when absent.
-    nonisolated static func optionalString(arguments: [String: AnyCodable], key: String) throws -> String? {
-        guard let raw = arguments[key] else { return nil }
-        guard let value: String = decodeValue(raw) else {
-            throw MCPLSPBridgeError.invalidArgument(name: key, reason: "expected string")
-        }
-        return value
-    }
-
-    /// Decode an `AnyCodable` payload (typically a nested JSON object such
-    /// as a `CallHierarchyItem` / `TypeHierarchyItem`) into a typed
-    /// `Decodable` value by round-tripping through JSON. Used by the
-    /// item-based hierarchy tools to turn the raw `item` argument into the
-    /// strongly-typed parameter expected by the LSP request.
-    nonisolated static func decodeFromAnyCodable<T: Decodable>(
-        _ value: AnyCodable,
-        as type: T.Type,
-        argumentName: String
-    ) throws -> T {
-        do {
-            let data = try JSONEncoder().encode(value)
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw MCPLSPBridgeError.invalidArgument(
-                name: argumentName,
-                reason: "failed to decode as \(T.self): \(error)"
-            )
-        }
-    }
-
-    /// `AnyCodable.storage` is private; recover the underlying primitive
-    /// by round-tripping through `JSONEncoder` + `JSONSerialization`.
-    ///
-    /// `Int` and `Bool` use strict numeric discrimination:
-    ///   - `Int` rejects fractional doubles (`3.9` → nil, not truncated to 3)
-    ///     and CFBoolean values.
-    ///   - `Bool` only accepts actual `CFBoolean` instances, not arbitrary
-    ///     `NSNumber`s coerced via `boolValue` (a JSON `42` must not become
-    ///     `true` just because it is non-zero).
-    private nonisolated static func decodeValue<T>(_ raw: AnyCodable) -> T? {
-        guard let data = try? JSONEncoder().encode(raw),
-              let any = try? JSONSerialization.jsonObject(
-                with: data,
-                options: [.fragmentsAllowed]
-              )
-        else { return nil }
-
-        // Bool: reject NSNumbers that aren't a CFBoolean. This is the only
-        // way to distinguish JSON `true`/`false` from JSON `1`/`0` — the
-        // standard `as? Bool` cast happily succeeds for any 0/1 NSNumber.
-        if T.self == Bool.self {
-            guard let n = any as? NSNumber,
-                  CFGetTypeID(n) == CFBooleanGetTypeID()
-            else { return nil }
-            return n.boolValue as? T
-        }
-
-        // Int: require a whole-number NSNumber. Reject fractional doubles
-        // (truncating 3.9 to 3 was the historical defect) and CFBooleans
-        // (so `include_declaration: true` does not silently become `1`).
-        if T.self == Int.self {
-            guard let n = any as? NSNumber else { return nil }
-            if CFGetTypeID(n) == CFBooleanGetTypeID() { return nil }
-            let d = n.doubleValue
-            guard d.isFinite,
-                  d == d.rounded(.toNearestOrEven),
-                  d == floor(d)
-            else { return nil }
-            return Int(truncating: n) as? T
-        }
-
-        if let value = any as? T { return value }
-        return nil
-    }
-
-    /// Normalize `input` (either an absolute filesystem path or a
-    /// `file://` URI) into a `(uri, fileURL)` pair where both fields are
-    /// derived from the same canonical path. The two forms (raw path vs
-    /// `file://`) MUST converge so the session-cache key in
-    /// `LSPService.session(for:)` doesn't split a single logical
-    /// workspace into two sessions.
-    ///
-    /// Returns `fileURL == nil` only for truly unparseable `file://`
-    /// inputs (e.g. `file://[bad]/foo bar baz`) whose path component
-    /// doesn't even start with `/`. Callers that need to react to that
-    /// case (`ensureFileOpen` throws an `invalidArgument` error) inspect
-    /// the optional directly.
-    nonisolated static func normalizeFileURI(_ input: String) -> (uri: String, fileURL: URL?) {
-        // A registered-name host (RFC 3986 §3.2.2) is composed of
-        // unreserved + sub-delims + percent-encoded octets. We accept
-        // the conservative subset that covers SMB-share / DNS hostnames
-        // in practice (ASCII letters, digits, `.`, `-`, `_`, `~`) and
-        // reject everything else — in particular `[`, `]`, whitespace,
-        // and `/` which would indicate a malformed authority component
-        // (e.g. `file://[bad]/...`).
-        func isValidRegisteredHost(_ host: String) -> Bool {
-            guard !host.isEmpty else { return false }
-            for scalar in host.unicodeScalars {
-                let v = scalar.value
-                let isASCIILetter = (v >= 0x41 && v <= 0x5A) || (v >= 0x61 && v <= 0x7A)
-                let isDigit = v >= 0x30 && v <= 0x39
-                let isOtherUnreserved = scalar == "." || scalar == "-"
-                    || scalar == "_" || scalar == "~"
-                if !(isASCIILetter || isDigit || isOtherUnreserved) {
-                    return false
-                }
-            }
-            return true
-        }
-
-        if input.hasPrefix("file://") {
-            // Fast path: a well-formed `file://` URI with no query /
-            // fragment. `URL(string:)` correctly percent-decodes the
-            // path portion and round-trips spaces and friends through
-            // `.absoluteString`. We bail to the rebuild path when:
-            //   * URL(string:) returns nil (someone smuggled in totally
-            //     malformed text after the scheme)
-            //   * isFileURL is false (the scheme was rewritten)
-            //   * query / fragment are present (a `?` in the filename is
-            //     a perfectly legal POSIX path char but URL(string:)
-            //     misinterprets it as a query delimiter — the rebuild
-            //     path correctly re-encodes it)
-            //
-            // Per RFC 8089 §3 the `file://<host>/<path>` form is valid
-            // (SMB shares, Windows UNC paths). We accept both the
-            // empty-host (`file:///path`) and the non-empty-host
-            // (`file://server/share/path`) forms here, provided the
-            // path component is absolute. A non-empty host must look
-            // like a registered name — anything that looks like a
-            // malformed IP-literal (`[bad]`) or carries forbidden host
-            // characters is rejected so the caller can surface a
-            // structured "unparseable URI" error.
-            if let url = URL(string: input),
-               url.isFileURL,
-               url.query == nil,
-               url.fragment == nil,
-               url.path.hasPrefix("/") {
-                // Use URLComponents.host because it preserves the
-                // square-bracket form for IP-literals — e.g.
-                // `file://[bad]/...` exposes host=="[bad]" via
-                // URLComponents but host=="bad" via URL.host, and the
-                // bracketed form is the one we must reject as a
-                // malformed registered name.
-                let host = URLComponents(url: url, resolvingAgainstBaseURL: false)?.host ?? ""
-                if host.isEmpty || isValidRegisteredHost(host) {
-                    return (url.absoluteString, url)
-                }
-            }
-            // Strip the scheme and inspect what comes next. A
-            // well-formed file URI is either:
-            //   * `file:///<absolute-path>` — empty host, path starts at
-            //     the third `/`.
-            //   * `file://<host>/<absolute-path>` (RFC 8089 §3) — host
-            //     ends at the first `/` after the scheme, path is
-            //     everything from that `/` onwards.
-            // For the empty-host form we can hand the absolute path to
-            // `URL(fileURLWithPath:)` directly. For the host form we
-            // must preserve the host on the rebuild so the
-            // percent-encoded output keeps the `file://<host>/<path>`
-            // shape.
-            let pathPart = String(input.dropFirst("file://".count))
-            if pathPart.hasPrefix("/") {
-                let fileURL = URL(fileURLWithPath: pathPart)
-                return (fileURL.absoluteString, fileURL)
-            }
-            // Host form: split on the first `/` after the scheme. The
-            // remainder MUST start with `/` (an absolute path) — anything
-            // else is malformed (`file://server` with no path, etc.).
-            if let slashIdx = pathPart.firstIndex(of: "/") {
-                let host = String(pathPart[..<slashIdx])
-                let absolutePath = String(pathPart[slashIdx...])
-                if isValidRegisteredHost(host), absolutePath.hasPrefix("/") {
-                    // Build a `file://<host><absolute-path>` URL via
-                    // URLComponents so the host is preserved and the
-                    // path is percent-encoded consistently with the
-                    // empty-host fast path.
-                    var comps = URLComponents()
-                    comps.scheme = "file"
-                    comps.host = host
-                    comps.path = absolutePath
-                    if let url = comps.url, url.isFileURL {
-                        return (url.absoluteString, url)
-                    }
-                }
-            }
-            // Anything else is malformed; return nil so `ensureFileOpen`
-            // can throw a structured error instead of silently inventing
-            // a relative path.
-            return (input, nil)
-        }
-        let fileURL = URL(fileURLWithPath: input)
-        return (fileURL.absoluteString, fileURL)
-    }
-
-    /// Convert a workspace path (either an absolute filesystem path or a
-    /// `file://` URI) into a `URL` suitable for `LSPService.session(for:)`.
-    /// The result is derived from `normalizeFileURI` so raw-path and
-    /// `file://` callers converge on the same `URL` (and therefore the
-    /// same session-cache key).
-    nonisolated static func fileURL(fromPathOrUri input: String) -> URL {
-        if let url = normalizeFileURI(input).fileURL {
-            return url
-        }
-        // Fall back to a permissive `URL(fileURLWithPath:)` on the raw
-        // input so this helper never returns nil for legitimate workspace
-        // paths. `ensureFileOpen` is the surface that surfaces
-        // "unparseable" as a structured error, not this helper.
-        return URL(fileURLWithPath: input)
-    }
-
-    /// Convert an absolute path or `file://` URI into the LSP
-    /// `DocumentUri` (string) form. Goes through `normalizeFileURI` so
-    /// raw-path callers and `file://` callers produce the same
-    /// percent-encoded string for the same logical file.
-    nonisolated static func documentUri(fromPathOrUri input: String) -> DocumentUri {
-        normalizeFileURI(input).uri
-    }
-
-    // MARK: - Response shaping helpers
-
-    /// Encode a result as a single-text-block `MCPContent`. Used by every
-    /// success path.
-    nonisolated static func makeJSONContent<T: Encodable>(_ value: T) throws -> MCPContent {
-        let encoder = JSONEncoder()
-        // Stable key order keeps test snapshots deterministic.
-        // `.withoutEscapingSlashes` keeps file:// URIs (and other slashed
-        // strings) human-readable instead of emitting `file:\/\/` escapes
-        // — important for MCP callers that grep the JSON payload.
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let data = try encoder.encode(value)
-        let text = String(data: data, encoding: .utf8) ?? "null"
-        return MCPContent(type: "text", text: text)
-    }
-
-    /// Map an LSPSession error (or any other thrown error) into a
-    /// human-readable text payload. JSON-RPC server errors are surfaced
-    /// inline so the MCP caller can read the diagnostic instead of
-    /// receiving an opaque thrown error.
-    nonisolated static func makeErrorContent(_ error: Error) -> MCPContent {
-        let message: String
-        switch error {
-        case let LSPSessionError.clientError(inner):
-            message = describe(clientError: inner)
-        case let inner as LSPClientError:
-            message = describe(clientError: inner)
-        default:
-            message = String(describing: error)
-        }
-        return MCPContent(type: "text", text: "LSP error: \(message)")
-    }
-
-    private nonisolated static func describe(clientError: LSPClientError) -> String {
-        switch clientError {
-        case .serverError(let code, let message):
-            return "server error \(code): \(message)"
-        case .responseDecodingFailed(let reason):
-            return "response decoding failed: \(reason)"
-        case .malformedFraming(let reason):
-            return "malformed framing: \(reason)"
-        case .methodNotFound(let m):
-            return "method not found: \(m)"
-        case .timeout:
-            return "timeout"
-        case .transportClosed:
-            return "transport closed"
-        case .alreadyStarted:
-            return "client already started"
-        case .notStarted:
-            return "client not started"
-        }
     }
 }
 
@@ -1390,7 +938,7 @@ private func extractFormattingOptions(
     guard let optionsAny = arguments["options"] else {
         throw MCPLSPBridgeError.missingArgument("options")
     }
-    return try MCPLSPBridge.decodeFromAnyCodable(
+    return try MCPArgumentCoding.decodeFromAnyCodable(
         optionsAny,
         as: FormattingOptions.self,
         argumentName: "options"
@@ -1508,7 +1056,7 @@ enum ReferencesTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: ReferenceParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        let includeDecl = try MCPLSPBridge.optionalBool(
+        let includeDecl = try MCPArgumentCoding.optionalBool(
             arguments: arguments,
             key: "include_declaration"
         ) ?? false
@@ -1594,7 +1142,7 @@ enum WorkspaceSymbolTool: SimpleLSPTool {
         arguments: [String: AnyCodable],
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: WorkspaceSymbolParams) {
-        let query = try MCPLSPBridge.requireString(arguments: arguments, key: "query")
+        let query = try MCPArgumentCoding.requireString(arguments: arguments, key: "query")
         return (nil, WorkspaceSymbolParams(query: query))
     }
 }
@@ -1624,20 +1172,20 @@ enum CompletionTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+        try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
 
         var context: CompletionContext?
-        if let kindRaw = try MCPLSPBridge.optionalInt(arguments: arguments, key: "trigger_kind") {
+        if let kindRaw = try MCPArgumentCoding.optionalInt(arguments: arguments, key: "trigger_kind") {
             guard let kind = CompletionTriggerKind(rawValue: kindRaw) else {
                 throw MCPLSPBridgeError.invalidArgument(
                     name: "trigger_kind",
                     reason: "must be one of 1, 2, 3"
                 )
             }
-            let triggerChar = try MCPLSPBridge.optionalString(
+            let triggerChar = try MCPArgumentCoding.optionalString(
                 arguments: arguments,
                 key: "trigger_character"
             )
@@ -1665,9 +1213,9 @@ enum CompletionTool: MCPLSPTool {
                 params: params,
                 resultType: CompletionResult?.self
             )
-            return try MCPLSPBridge.makeJSONContent(result)
+            return try MCPArgumentCoding.makeJSONContent(result)
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
     }
 }
@@ -1727,7 +1275,7 @@ enum RenameTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: RenameParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        let newName = try MCPLSPBridge.requireString(arguments: arguments, key: "new_name")
+        let newName = try MCPArgumentCoding.requireString(arguments: arguments, key: "new_name")
         let params = RenameParams(
             textDocument: TextDocumentIdentifier(uri: uri),
             position: position,
@@ -1776,10 +1324,10 @@ enum CodeActionTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+        try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
 
         // Decode the optional context fields. `diagnostics` round-trips
         // verbatim through the LSP Diagnostic shape so a quickfix consumer
@@ -1787,7 +1335,7 @@ enum CodeActionTool: MCPLSPTool {
         // `trigger_kind` mirror the LSP spec one-for-one.
         let diagnostics: [Diagnostic]
         if let diagnosticsAny = arguments["diagnostics"] {
-            diagnostics = try MCPLSPBridge.decodeFromAnyCodable(
+            diagnostics = try MCPArgumentCoding.decodeFromAnyCodable(
                 diagnosticsAny,
                 as: [Diagnostic].self,
                 argumentName: "diagnostics"
@@ -1797,7 +1345,7 @@ enum CodeActionTool: MCPLSPTool {
         }
         let only: [CodeActionKind]?
         if let onlyAny = arguments["only"] {
-            only = try MCPLSPBridge.decodeFromAnyCodable(
+            only = try MCPArgumentCoding.decodeFromAnyCodable(
                 onlyAny,
                 as: [CodeActionKind].self,
                 argumentName: "only"
@@ -1806,7 +1354,7 @@ enum CodeActionTool: MCPLSPTool {
             only = nil
         }
         let triggerKind: CodeActionTriggerKind?
-        if let kindRaw = try MCPLSPBridge.optionalInt(arguments: arguments, key: "trigger_kind") {
+        if let kindRaw = try MCPArgumentCoding.optionalInt(arguments: arguments, key: "trigger_kind") {
             guard let kind = CodeActionTriggerKind(rawValue: kindRaw) else {
                 throw MCPLSPBridgeError.invalidArgument(
                     name: "trigger_kind",
@@ -1837,9 +1385,9 @@ enum CodeActionTool: MCPLSPTool {
                 params: params,
                 resultType: CodeActionItemList?.self
             )
-            return try MCPLSPBridge.makeJSONContent(result?.items)
+            return try MCPArgumentCoding.makeJSONContent(result?.items)
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
     }
 }
@@ -1872,8 +1420,8 @@ enum DiagnosticsTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: DocumentDiagnosticParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        let identifier = try MCPLSPBridge.optionalString(arguments: arguments, key: "identifier")
-        let previousResultId = try MCPLSPBridge.optionalString(
+        let identifier = try MCPArgumentCoding.optionalString(arguments: arguments, key: "identifier")
+        let previousResultId = try MCPArgumentCoding.optionalString(
             arguments: arguments,
             key: "previous_result_id"
         )
@@ -1912,13 +1460,13 @@ enum CheckInstallationTool: MCPLSPTool {
                 text: #"{"error":"installer not configured"}"#
             )
         }
-        if let lang = try MCPLSPBridge.optionalString(arguments: arguments, key: "language_id") {
+        if let lang = try MCPArgumentCoding.optionalString(arguments: arguments, key: "language_id") {
             let check = await installer.checkInstallation(forLanguageId: lang)
-            return try MCPLSPBridge.makeJSONContent(InstallationCheckDTO(from: check))
+            return try MCPArgumentCoding.makeJSONContent(InstallationCheckDTO(from: check))
         }
         let all = await installer.checkAllInstallations()
         let dtos: [String: InstallationCheckDTO] = all.mapValues(InstallationCheckDTO.init(from:))
-        return try MCPLSPBridge.makeJSONContent(dtos)
+        return try MCPArgumentCoding.makeJSONContent(dtos)
     }
 }
 
@@ -1944,8 +1492,8 @@ enum InstallTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let languageId = try MCPLSPBridge.requireString(arguments: arguments, key: "language_id")
-        let approve = try MCPLSPBridge.optionalBool(
+        let languageId = try MCPArgumentCoding.requireString(arguments: arguments, key: "language_id")
+        let approve = try MCPArgumentCoding.optionalBool(
             arguments: arguments,
             key: "approve_prerequisites"
         ) ?? false
@@ -1965,7 +1513,7 @@ enum InstallTool: MCPLSPTool {
             approvePrerequisites: approve,
             confirmationMode: mode
         )
-        return try MCPLSPBridge.makeJSONContent(InstallStatusDTO(from: status))
+        return try MCPArgumentCoding.makeJSONContent(InstallStatusDTO(from: status))
     }
 }
 
@@ -1987,7 +1535,7 @@ enum InstallStatusTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let languageId = try MCPLSPBridge.requireString(arguments: arguments, key: "language_id")
+        let languageId = try MCPArgumentCoding.requireString(arguments: arguments, key: "language_id")
         guard let installer = bridge.installer else {
             return MCPContent(
                 type: "text",
@@ -1995,7 +1543,7 @@ enum InstallStatusTool: MCPLSPTool {
             )
         }
         let status = await installer.currentStatus(forLanguageId: languageId)
-        return try MCPLSPBridge.makeJSONContent(InstallStatusDTO(from: status))
+        return try MCPArgumentCoding.makeJSONContent(InstallStatusDTO(from: status))
     }
 }
 
@@ -2013,7 +1561,7 @@ enum SessionStatusTool: MCPLSPTool {
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
         let sessions = await bridge.service.currentSessions()
         let dtos = sessions.map(SessionInfoDTO.init(from:))
-        return try MCPLSPBridge.makeJSONContent(dtos)
+        return try MCPArgumentCoding.makeJSONContent(dtos)
     }
 }
 
@@ -2055,7 +1603,7 @@ enum SessionWarmupTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
 
         // Optional `files` payload: an array of strings (paths or file://
@@ -2065,14 +1613,14 @@ enum SessionWarmupTool: MCPLSPTool {
         // strings) are surfaced as `invalidArgument` so callers can fix
         // the call rather than silently lose warmup work.
         if let filesAny = arguments["files"] {
-            let paths: [String] = try MCPLSPBridge.decodeFromAnyCodable(
+            let paths: [String] = try MCPArgumentCoding.decodeFromAnyCodable(
                 filesAny,
                 as: [String].self,
                 argumentName: "files"
             )
             for path in paths {
-                let uri = MCPLSPBridge.documentUri(fromPathOrUri: path)
-                try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+                let uri = MCPArgumentCoding.documentUri(fromPathOrUri: path)
+                try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
             }
         }
 
@@ -2083,7 +1631,7 @@ enum SessionWarmupTool: MCPLSPTool {
             state: SessionStateDTO(from: state),
             createdAtUptimeMillis: 0
         )
-        return try MCPLSPBridge.makeJSONContent(dto)
+        return try MCPArgumentCoding.makeJSONContent(dto)
     }
 }
 
@@ -2106,15 +1654,15 @@ enum SessionShutdownTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let workspaceString = try MCPLSPBridge.requireString(
+        let workspaceString = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let languageId = try MCPLSPBridge.requireString(
+        let languageId = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "language_id"
         )
-        let workspaceURL = MCPLSPBridge.fileURL(fromPathOrUri: workspaceString)
+        let workspaceURL = MCPArgumentCoding.fileURL(fromPathOrUri: workspaceString)
         await bridge.service.shutdownSession(
             workspaceRoot: workspaceURL,
             languageId: languageId
@@ -2159,7 +1707,7 @@ enum CallHierarchyIncomingTool: SimpleLSPTool {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
-        let item = try MCPLSPBridge.decodeFromAnyCodable(
+        let item = try MCPArgumentCoding.decodeFromAnyCodable(
             itemAny,
             as: CallHierarchyItem.self,
             argumentName: "item"
@@ -2186,7 +1734,7 @@ enum CallHierarchyOutgoingTool: SimpleLSPTool {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
-        let item = try MCPLSPBridge.decodeFromAnyCodable(
+        let item = try MCPArgumentCoding.decodeFromAnyCodable(
             itemAny,
             as: CallHierarchyItem.self,
             argumentName: "item"
@@ -2231,7 +1779,7 @@ enum TypeHierarchySupertypesTool: SimpleLSPTool {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
-        let item = try MCPLSPBridge.decodeFromAnyCodable(
+        let item = try MCPArgumentCoding.decodeFromAnyCodable(
             itemAny,
             as: TypeHierarchyItem.self,
             argumentName: "item"
@@ -2258,7 +1806,7 @@ enum TypeHierarchySubtypesTool: SimpleLSPTool {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
-        let item = try MCPLSPBridge.decodeFromAnyCodable(
+        let item = try MCPArgumentCoding.decodeFromAnyCodable(
             itemAny,
             as: TypeHierarchyItem.self,
             argumentName: "item"
@@ -2322,7 +1870,7 @@ enum CodeLensResolveTool: SimpleLSPTool {
         guard let codeLensAny = arguments["code_lens"] else {
             throw MCPLSPBridgeError.missingArgument("code_lens")
         }
-        let codeLens = try MCPLSPBridge.decodeFromAnyCodable(
+        let codeLens = try MCPArgumentCoding.decodeFromAnyCodable(
             codeLensAny,
             as: CodeLens.self,
             argumentName: "code_lens"
@@ -2368,7 +1916,7 @@ enum InlayHintResolveTool: SimpleLSPTool {
         guard let hintAny = arguments["inlay_hint"] else {
             throw MCPLSPBridgeError.missingArgument("inlay_hint")
         }
-        let hint = try MCPLSPBridge.decodeFromAnyCodable(
+        let hint = try MCPArgumentCoding.decodeFromAnyCodable(
             hintAny,
             as: InlayHint.self,
             argumentName: "inlay_hint"
@@ -2414,7 +1962,7 @@ enum InlineValueTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: InlineValueParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        let frameId = try MCPLSPBridge.optionalInt(
+        let frameId = try MCPArgumentCoding.optionalInt(
             arguments: arguments,
             key: "frame_id"
         ) ?? 0
@@ -2422,19 +1970,19 @@ enum InlineValueTool: SimpleLSPTool {
         // `stopped_*` fields the bridge mirrors the requested target range —
         // a sensible default for non-debug uses where the caller does not
         // distinguish between "range under inspection" and "frame location".
-        let stoppedStartLine = try MCPLSPBridge.optionalInt(
+        let stoppedStartLine = try MCPArgumentCoding.optionalInt(
             arguments: arguments,
             key: "stopped_start_line"
         )
-        let stoppedStartCol = try MCPLSPBridge.optionalInt(
+        let stoppedStartCol = try MCPArgumentCoding.optionalInt(
             arguments: arguments,
             key: "stopped_start_column"
         )
-        let stoppedEndLine = try MCPLSPBridge.optionalInt(
+        let stoppedEndLine = try MCPArgumentCoding.optionalInt(
             arguments: arguments,
             key: "stopped_end_line"
         )
-        let stoppedEndCol = try MCPLSPBridge.optionalInt(
+        let stoppedEndCol = try MCPArgumentCoding.optionalInt(
             arguments: arguments,
             key: "stopped_end_column"
         )
@@ -2625,7 +2173,7 @@ enum SemanticTokensDeltaTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: SemanticTokensDeltaParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        let previousResultId = try MCPLSPBridge.requireString(
+        let previousResultId = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "previous_result_id"
         )
@@ -2692,7 +2240,7 @@ enum DocumentLinkResolveTool: SimpleLSPTool {
         guard let linkAny = arguments["document_link"] else {
             throw MCPLSPBridgeError.missingArgument("document_link")
         }
-        let link = try MCPLSPBridge.decodeFromAnyCodable(
+        let link = try MCPArgumentCoding.decodeFromAnyCodable(
             linkAny,
             as: DocumentLink.self,
             argumentName: "document_link"
@@ -2746,7 +2294,7 @@ enum ColorPresentationTool: SimpleLSPTool {
         guard let colorAny = arguments["color"] else {
             throw MCPLSPBridgeError.missingArgument("color")
         }
-        let color = try MCPLSPBridge.decodeFromAnyCodable(
+        let color = try MCPArgumentCoding.decodeFromAnyCodable(
             colorAny,
             as: LSPColor.self,
             argumentName: "color"
@@ -2779,7 +2327,7 @@ enum CompletionResolveTool: SimpleLSPTool {
         guard let itemAny = arguments["completion_item"] else {
             throw MCPLSPBridgeError.missingArgument("completion_item")
         }
-        let item = try MCPLSPBridge.decodeFromAnyCodable(
+        let item = try MCPArgumentCoding.decodeFromAnyCodable(
             itemAny,
             as: CompletionItem.self,
             argumentName: "completion_item"
@@ -2807,7 +2355,7 @@ enum CodeActionResolveTool: SimpleLSPTool {
         guard let actionAny = arguments["code_action"] else {
             throw MCPLSPBridgeError.missingArgument("code_action")
         }
-        let action = try MCPLSPBridge.decodeFromAnyCodable(
+        let action = try MCPArgumentCoding.decodeFromAnyCodable(
             actionAny,
             as: CodeAction.self,
             argumentName: "code_action"
@@ -2886,7 +2434,7 @@ enum OnTypeFormattingTool: SimpleLSPTool {
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: DocumentOnTypeFormattingParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        let ch = try MCPLSPBridge.requireString(arguments: arguments, key: "ch")
+        let ch = try MCPArgumentCoding.requireString(arguments: arguments, key: "ch")
         let options = try extractFormattingOptions(arguments: arguments)
         let params = DocumentOnTypeFormattingParams(
             textDocument: TextDocumentIdentifier(uri: uri),
@@ -2917,7 +2465,7 @@ enum WorkspaceSymbolResolveTool: SimpleLSPTool {
         guard let symbolAny = arguments["workspace_symbol"] else {
             throw MCPLSPBridgeError.missingArgument("workspace_symbol")
         }
-        let symbol = try MCPLSPBridge.decodeFromAnyCodable(
+        let symbol = try MCPArgumentCoding.decodeFromAnyCodable(
             symbolAny,
             as: WorkspaceSymbol.self,
             argumentName: "workspace_symbol"
@@ -2969,13 +2517,13 @@ enum WorkspaceDiagnosticPullTool: SimpleLSPTool {
         arguments: [String: AnyCodable],
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: WorkspaceDiagnosticParams) {
-        let identifier = try MCPLSPBridge.optionalString(
+        let identifier = try MCPArgumentCoding.optionalString(
             arguments: arguments,
             key: "identifier"
         )
         let previousResultIds: [PreviousResultId]
         if let rawAny = arguments["previous_result_ids"] {
-            previousResultIds = try MCPLSPBridge.decodeFromAnyCodable(
+            previousResultIds = try MCPArgumentCoding.decodeFromAnyCodable(
                 rawAny,
                 as: [PreviousResultId].self,
                 argumentName: "previous_result_ids"
@@ -3022,10 +2570,10 @@ enum WorkspaceExecuteCommandTool: SimpleLSPTool {
         arguments: [String: AnyCodable],
         bridge: MCPLSPBridge
     ) throws -> (uri: DocumentUri?, params: ExecuteCommandParams) {
-        let command = try MCPLSPBridge.requireString(arguments: arguments, key: "command")
+        let command = try MCPArgumentCoding.requireString(arguments: arguments, key: "command")
         let commandArguments: [AnyCodable]?
         if let rawAny = arguments["arguments"] {
-            commandArguments = try MCPLSPBridge.decodeFromAnyCodable(
+            commandArguments = try MCPArgumentCoding.decodeFromAnyCodable(
                 rawAny,
                 as: [AnyCodable].self,
                 argumentName: "arguments"
@@ -3081,12 +2629,12 @@ enum WorkspaceApplyEditTool: MCPLSPTool {
         }
         // Validate by decoding. The decoded value is discarded for now —
         // the follow-up batch wires it into the workspace mutation surface.
-        let _: WorkspaceEdit = try MCPLSPBridge.decodeFromAnyCodable(
+        let _: WorkspaceEdit = try MCPArgumentCoding.decodeFromAnyCodable(
             editAny,
             as: WorkspaceEdit.self,
             argumentName: "edit"
         )
-        let commit = try MCPLSPBridge.requireBool(
+        let commit = try MCPArgumentCoding.requireBool(
             arguments: arguments,
             key: "commit"
         )
@@ -3096,7 +2644,7 @@ enum WorkspaceApplyEditTool: MCPLSPTool {
         } else {
             result = ApplyWorkspaceEditResult(applied: false, failureReason: "dry-run")
         }
-        return try MCPLSPBridge.makeJSONContent(result)
+        return try MCPArgumentCoding.makeJSONContent(result)
     }
 }
 
@@ -3120,15 +2668,15 @@ enum WorkspaceConfigurationGetTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let workspaceRoot = try MCPLSPBridge.requireString(
+        let workspaceRoot = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let languageId = try MCPLSPBridge.requireString(
+        let languageId = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "language_id"
         )
-        let section = try MCPLSPBridge.requireString(
+        let section = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "section"
         )
@@ -3138,7 +2686,7 @@ enum WorkspaceConfigurationGetTool: MCPLSPTool {
             section: section
         )
         if let value = bridge.workspaceConfiguration(key: key) {
-            return try MCPLSPBridge.makeJSONContent(value)
+            return try MCPArgumentCoding.makeJSONContent(value)
         }
         // Unknown section: return the bare JSON null literal. The
         // contract permits `null` / `{}` / `{"value":null}`; we ship the
@@ -3173,15 +2721,15 @@ enum WorkspaceConfigurationSetTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let workspaceRoot = try MCPLSPBridge.requireString(
+        let workspaceRoot = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let languageId = try MCPLSPBridge.requireString(
+        let languageId = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "language_id"
         )
-        let section = try MCPLSPBridge.requireString(
+        let section = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "section"
         )
@@ -3216,12 +2764,12 @@ private func handleWillFilesRequest<Params: Encodable & Sendable>(
     } catch let err as MCPLSPBridgeError {
         throw err
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
     guard let filesAny = arguments["files"] else {
         throw MCPLSPBridgeError.missingArgument("files")
     }
-    let files = try MCPLSPBridge.decodeFromAnyCodable(
+    let files = try MCPArgumentCoding.decodeFromAnyCodable(
         filesAny,
         as: [FileDescriptor].self,
         argumentName: "files"
@@ -3233,9 +2781,9 @@ private func handleWillFilesRequest<Params: Encodable & Sendable>(
             params: params,
             resultType: WorkspaceEdit?.self
         )
-        return try MCPLSPBridge.makeJSONContent(result)
+        return try MCPArgumentCoding.makeJSONContent(result)
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
 }
 
@@ -3302,12 +2850,12 @@ private func handleDidFilesNotification<Params: Encodable & Sendable>(
     } catch let err as MCPLSPBridgeError {
         throw err
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
     guard let filesAny = arguments["files"] else {
         throw MCPLSPBridgeError.missingArgument("files")
     }
-    let files = try MCPLSPBridge.decodeFromAnyCodable(
+    let files = try MCPArgumentCoding.decodeFromAnyCodable(
         filesAny,
         as: [FileDescriptor].self,
         argumentName: "files"
@@ -3316,7 +2864,7 @@ private func handleDidFilesNotification<Params: Encodable & Sendable>(
     do {
         try await session.sendGenericNotification(method: method, params: params)
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
     return MCPContent(type: "text", text: #"{"sent":true}"#)
 }
@@ -3523,7 +3071,7 @@ enum BatchTool: MCPLSPTool {
         guard let requestsAny = arguments["requests"] else {
             throw MCPLSPBridgeError.missingArgument("requests")
         }
-        let requests = try MCPLSPBridge.decodeFromAnyCodable(
+        let requests = try MCPArgumentCoding.decodeFromAnyCodable(
             requestsAny,
             as: [BatchRequest].self,
             argumentName: "requests"
@@ -3564,7 +3112,7 @@ enum BatchTool: MCPLSPTool {
                 )
             }
         }
-        return try MCPLSPBridge.makeJSONContent(entries)
+        return try MCPArgumentCoding.makeJSONContent(entries)
     }
 
     /// Parse one inner tool's text payload back into structured JSON so it
@@ -3640,17 +3188,17 @@ enum HoverBundleTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+        try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
 
         // Read context_lines (default 10, clamped to [0, 100] so a
         // misbehaving caller can't ask for a snippet bigger than the
         // file). A `context_lines` value of the wrong shape surfaces as
         // `invalidArgument` to the caller — matching the rest of the
         // bridge rather than silently defaulting.
-        let rawContext = try MCPLSPBridge.optionalInt(arguments: arguments, key: "context_lines") ?? 10
+        let rawContext = try MCPArgumentCoding.optionalInt(arguments: arguments, key: "context_lines") ?? 10
         let contextLines = min(max(rawContext, 0), 100)
 
         let hoverParams = HoverParams(
@@ -3718,7 +3266,7 @@ enum HoverBundleTool: MCPLSPTool {
             dependentTypes: dependentTypes,
             docComment: docComment
         )
-        return try MCPLSPBridge.makeJSONContent(bundle)
+        return try MCPArgumentCoding.makeJSONContent(bundle)
     }
 
     /// Flatten a `Hover.contents` payload into a single plain-text
@@ -3858,7 +3406,7 @@ enum HoverBundleTool: MCPLSPTool {
         // `try?` because we still want to attempt the hover — the
         // server may serve it from a previously parsed source, and
         // failure to do so simply leaves the entry's `hover` as nil.
-        try? await MCPLSPBridge.ensureFileOpen(session: session, uri: firstLocation.uri)
+        try? await MCPArgumentCoding.ensureFileOpen(session: session, uri: firstLocation.uri)
         let hoverParams = HoverParams(
             textDocument: TextDocumentIdentifier(uri: firstLocation.uri),
             position: firstLocation.range.start
@@ -3999,7 +3547,7 @@ enum HoverBundleTool: MCPLSPTool {
         centerLine: Int,
         contextLines: Int
     ) -> String {
-        let normalized = MCPLSPBridge.normalizeFileURI(uri)
+        let normalized = MCPArgumentCoding.normalizeFileURI(uri)
         guard let url = normalized.fileURL, url.isFileURL else { return "" }
         guard FileManager.default.fileExists(atPath: url.path) else { return "" }
         let raw: String
@@ -4153,8 +3701,8 @@ enum SymbolWalkTool: MCPLSPTool {
         //
         // Passing BOTH `kind` and `direction` is ambiguous and rejected
         // outright — silently preferring one would mask a caller bug.
-        let kindArg = try MCPLSPBridge.optionalString(arguments: arguments, key: "kind")
-        let directionArg = try MCPLSPBridge.optionalString(arguments: arguments, key: "direction")
+        let kindArg = try MCPArgumentCoding.optionalString(arguments: arguments, key: "kind")
+        let directionArg = try MCPArgumentCoding.optionalString(arguments: arguments, key: "direction")
         let walkKind: String
         if kindArg != nil, directionArg != nil {
             throw MCPLSPBridgeError.invalidArgument(
@@ -4181,12 +3729,12 @@ enum SymbolWalkTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
-        let rawDepth = try MCPLSPBridge.optionalInt(arguments: arguments, key: "depth") ?? 1
+        let rawDepth = try MCPArgumentCoding.optionalInt(arguments: arguments, key: "depth") ?? 1
         // Clamp to [1, 5] — values outside the range are accepted but
         // pinned so a runaway caller can't stampede the LSP server.
         let depth = min(max(rawDepth, 1), 5)
@@ -4194,7 +3742,7 @@ enum SymbolWalkTool: MCPLSPTool {
         let result: WalkResult
         switch walkKind {
         case "call_incoming":
-            let seed = try MCPLSPBridge.decodeFromAnyCodable(
+            let seed = try MCPArgumentCoding.decodeFromAnyCodable(
                 itemAny,
                 as: CallHierarchyItem.self,
                 argumentName: "item"
@@ -4206,7 +3754,7 @@ enum SymbolWalkTool: MCPLSPTool {
                 outgoing: false
             )
         case "call_outgoing":
-            let seed = try MCPLSPBridge.decodeFromAnyCodable(
+            let seed = try MCPArgumentCoding.decodeFromAnyCodable(
                 itemAny,
                 as: CallHierarchyItem.self,
                 argumentName: "item"
@@ -4218,7 +3766,7 @@ enum SymbolWalkTool: MCPLSPTool {
                 outgoing: true
             )
         case "type_supertypes":
-            let seed = try MCPLSPBridge.decodeFromAnyCodable(
+            let seed = try MCPArgumentCoding.decodeFromAnyCodable(
                 itemAny,
                 as: TypeHierarchyItem.self,
                 argumentName: "item"
@@ -4236,7 +3784,7 @@ enum SymbolWalkTool: MCPLSPTool {
                 prepareError: prepared.prepareError
             )
         case "type_subtypes":
-            let seed = try MCPLSPBridge.decodeFromAnyCodable(
+            let seed = try MCPArgumentCoding.decodeFromAnyCodable(
                 itemAny,
                 as: TypeHierarchyItem.self,
                 argumentName: "item"
@@ -4260,7 +3808,7 @@ enum SymbolWalkTool: MCPLSPTool {
             )
         }
 
-        return try MCPLSPBridge.makeJSONContent(result)
+        return try MCPArgumentCoding.makeJSONContent(result)
     }
 
     /// Shared BFS over a call hierarchy. `outgoing == true` selects
@@ -4496,7 +4044,7 @@ enum GlobalWorkspaceSymbolTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let query = try MCPLSPBridge.requireString(arguments: arguments, key: "query")
+        let query = try MCPArgumentCoding.requireString(arguments: arguments, key: "query")
         let sessions = bridge.service.allSessions()
         var aggregated: [AnyCodable] = []
         for session in sessions {
@@ -4519,7 +4067,7 @@ enum GlobalWorkspaceSymbolTool: MCPLSPTool {
                 continue
             }
         }
-        return try MCPLSPBridge.makeJSONContent(aggregated)
+        return try MCPArgumentCoding.makeJSONContent(aggregated)
     }
 }
 
@@ -4561,16 +4109,16 @@ enum CrossWorkspaceDefinitionTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
+        try await MCPArgumentCoding.ensureFileOpen(session: session, uri: uri)
 
-        let workspaceRootString = try MCPLSPBridge.requireString(
+        let workspaceRootString = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let originRoot = MCPLSPBridge.fileURL(fromPathOrUri: workspaceRootString)
+        let originRoot = MCPArgumentCoding.fileURL(fromPathOrUri: workspaceRootString)
 
         // 1. textDocument/definition in the origin session.
         let definitionParams = DefinitionParams(
@@ -4656,7 +4204,7 @@ enum CrossWorkspaceDefinitionTool: MCPLSPTool {
             definition: definitionAny,
             crossWorkspace: crossHits
         )
-        return try MCPLSPBridge.makeJSONContent(bundle)
+        return try MCPArgumentCoding.makeJSONContent(bundle)
     }
 }
 
@@ -4686,23 +4234,23 @@ enum DiagnosticsDiffTool: MCPLSPTool {
     }()
 
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let workspaceString = try MCPLSPBridge.requireString(
+        let workspaceString = try MCPArgumentCoding.requireString(
             arguments: arguments,
             key: "workspace_root"
         )
-        let since = try MCPLSPBridge.requireInt(
+        let since = try MCPArgumentCoding.requireInt(
             arguments: arguments,
             key: "since_snapshot_id"
         )
-        let workspaceURL = MCPLSPBridge.fileURL(fromPathOrUri: workspaceString)
+        let workspaceURL = MCPArgumentCoding.fileURL(fromPathOrUri: workspaceString)
         do {
             let diff = try await bridge.diagnosticsStore.diff(
                 workspaceRoot: workspaceURL,
                 since: since
             )
-            return try MCPLSPBridge.makeJSONContent(diff)
+            return try MCPArgumentCoding.makeJSONContent(diff)
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
     }
 }
@@ -4746,7 +4294,7 @@ enum CapabilitiesTool: MCPLSPTool {
         } catch let err as MCPLSPBridgeError {
             throw err
         } catch {
-            return MCPLSPBridge.makeErrorContent(error)
+            return MCPArgumentCoding.makeErrorContent(error)
         }
         let registry = await session.capabilityRegistry()
         let staticCaps = await registry.currentStaticCapabilities()
@@ -4757,7 +4305,7 @@ enum CapabilitiesTool: MCPLSPTool {
             staticCapabilities: staticCaps,
             dynamic: dynamicList
         )
-        return try MCPLSPBridge.makeJSONContent(snapshot)
+        return try MCPArgumentCoding.makeJSONContent(snapshot)
     }
 }
 
@@ -4811,12 +4359,12 @@ private func handleNotebookNotification<Params: Codable & Sendable>(
     } catch let err as MCPLSPBridgeError {
         throw err
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
     guard let notebookAny = arguments["notebook"] else {
         throw MCPLSPBridgeError.missingArgument("notebook")
     }
-    let params = try MCPLSPBridge.decodeFromAnyCodable(
+    let params = try MCPArgumentCoding.decodeFromAnyCodable(
         notebookAny,
         as: paramsType,
         argumentName: "notebook"
@@ -4824,7 +4372,7 @@ private func handleNotebookNotification<Params: Codable & Sendable>(
     do {
         try await session.sendGenericNotification(method: method, params: params)
     } catch {
-        return MCPLSPBridge.makeErrorContent(error)
+        return MCPArgumentCoding.makeErrorContent(error)
     }
     return MCPContent(type: "text", text: #"{"success":true}"#)
 }
