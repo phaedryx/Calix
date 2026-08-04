@@ -1471,36 +1471,19 @@ enum TypeDefinitionTool: SimpleLSPTool {
 
 // MARK: - ImplementationTool
 
-enum ImplementationTool: MCPLSPTool {
+enum ImplementationTool: SimpleLSPTool {
     static let name = "lsp_implementation"
     static let description = "Go to the implementation(s) of the symbol at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/implementation"
+    typealias Result = ImplementationResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: ImplementationParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = ImplementationParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: ImplementationResult? = try await session.sendRequest(
-                method: "textDocument/implementation",
-                params: params,
-                resultType: ImplementationResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, ImplementationParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -1553,36 +1536,19 @@ enum ReferencesTool: MCPLSPTool {
 
 // MARK: - DocumentHighlightTool
 
-enum DocumentHighlightTool: MCPLSPTool {
+enum DocumentHighlightTool: SimpleLSPTool {
     static let name = "lsp_document_highlight"
     static let description = "Highlight every occurrence of the symbol at a position within the file."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/documentHighlight"
+    typealias Result = [DocumentHighlight]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentHighlightParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DocumentHighlightParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: [DocumentHighlight]? = try await session.sendRequest(
-                method: "textDocument/documentHighlight",
-                params: params,
-                resultType: [DocumentHighlight]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DocumentHighlightParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -1750,71 +1716,37 @@ enum CompletionTool: MCPLSPTool {
 
 // MARK: - SignatureHelpTool
 
-enum SignatureHelpTool: MCPLSPTool {
+enum SignatureHelpTool: SimpleLSPTool {
     static let name = "lsp_signature_help"
     static let description = "Get signature help (parameter info) at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/signatureHelp"
+    typealias Result = SignatureHelp?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: SignatureHelpParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = SignatureHelpParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: SignatureHelp? = try await session.sendRequest(
-                method: "textDocument/signatureHelp",
-                params: params,
-                resultType: SignatureHelp?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, SignatureHelpParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
 // MARK: - PrepareRenameTool
 
-enum PrepareRenameTool: MCPLSPTool {
+enum PrepareRenameTool: SimpleLSPTool {
     static let name = "lsp_prepare_rename"
     static let description = "Check whether the symbol at a position can be renamed."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/prepareRename"
+    typealias Result = PrepareRenameResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: PrepareRenameParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = PrepareRenameParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: PrepareRenameResult? = try await session.sendRequest(
-                method: "textDocument/prepareRename",
-                params: params,
-                resultType: PrepareRenameResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, PrepareRenameParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -2261,36 +2193,19 @@ enum SessionShutdownTool: MCPLSPTool {
 
 // MARK: - CallHierarchyPrepareTool
 
-enum CallHierarchyPrepareTool: MCPLSPTool {
+enum CallHierarchyPrepareTool: SimpleLSPTool {
     static let name = "lsp_call_hierarchy_prepare"
     static let description = "Prepare a call hierarchy at a position. Returns CallHierarchyItem entries to use with incoming/outgoing calls."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/prepareCallHierarchy"
+    typealias Result = [CallHierarchyItem]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CallHierarchyPrepareParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = CallHierarchyPrepareParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: [CallHierarchyItem]? = try await session.sendRequest(
-                method: "textDocument/prepareCallHierarchy",
-                params: params,
-                resultType: [CallHierarchyItem]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, CallHierarchyPrepareParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -2376,36 +2291,19 @@ enum CallHierarchyOutgoingTool: MCPLSPTool {
 
 // MARK: - TypeHierarchyPrepareTool
 
-enum TypeHierarchyPrepareTool: MCPLSPTool {
+enum TypeHierarchyPrepareTool: SimpleLSPTool {
     static let name = "lsp_type_hierarchy_prepare"
     static let description = "Prepare a type hierarchy at a position. Returns TypeHierarchyItem entries to use with supertypes/subtypes."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/prepareTypeHierarchy"
+    typealias Result = [TypeHierarchyItem]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: TypeHierarchyPrepareParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = TypeHierarchyPrepareParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: [TypeHierarchyItem]? = try await session.sendRequest(
-                method: "textDocument/prepareTypeHierarchy",
-                params: params,
-                resultType: [TypeHierarchyItem]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, TypeHierarchyPrepareParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -2491,36 +2389,19 @@ enum TypeHierarchySubtypesTool: MCPLSPTool {
 
 // MARK: - MonikerTool
 
-enum MonikerTool: MCPLSPTool {
+enum MonikerTool: SimpleLSPTool {
     static let name = "lsp_moniker"
     static let description = "Get monikers (cross-project symbol identifiers) at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/moniker"
+    typealias Result = [Moniker]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: MonikerParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = MonikerParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: [Moniker]? = try await session.sendRequest(
-                method: "textDocument/moniker",
-                params: params,
-                resultType: [Moniker]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, MonikerParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
@@ -3019,36 +2900,19 @@ enum SemanticTokensDeltaTool: MCPLSPTool {
 
 // MARK: - LinkedEditingRangeTool
 
-enum LinkedEditingRangeTool: MCPLSPTool {
+enum LinkedEditingRangeTool: SimpleLSPTool {
     static let name = "lsp_linked_editing_range"
     static let description = "Get linked editing ranges at a position (e.g. matching open/close tags)."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/linkedEditingRange"
+    typealias Result = LinkedEditingRanges?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: LinkedEditingRangeParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = LinkedEditingRangeParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: LinkedEditingRanges? = try await session.sendRequest(
-                method: "textDocument/linkedEditingRange",
-                params: params,
-                resultType: LinkedEditingRanges?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, LinkedEditingRangeParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
