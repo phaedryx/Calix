@@ -1571,7 +1571,7 @@ enum DocumentSymbolTool: SimpleLSPTool {
 
 // MARK: - WorkspaceSymbolTool
 
-enum WorkspaceSymbolTool: MCPLSPTool {
+enum WorkspaceSymbolTool: SimpleLSPTool {
     static let name = "lsp_workspace_symbol"
     static let description = "Search for symbols across the whole workspace by name."
     static let inputSchema: [String: AnyCodable] = {
@@ -1587,28 +1587,15 @@ enum WorkspaceSymbolTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "workspace/symbol"
+    typealias Result = WorkspaceSymbolResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: WorkspaceSymbolParams) {
         let query = try MCPLSPBridge.requireString(arguments: arguments, key: "query")
-        let params = WorkspaceSymbolParams(query: query)
-        do {
-            let result: WorkspaceSymbolResult? = try await session.sendRequest(
-                method: "workspace/symbol",
-                params: params,
-                resultType: WorkspaceSymbolResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, WorkspaceSymbolParams(query: query))
     }
 }
 
@@ -3006,7 +2993,7 @@ enum WorkspaceSymbolResolveTool: SimpleLSPTool {
 
 // MARK: - WorkspaceDiagnosticPullTool
 
-enum WorkspaceDiagnosticPullTool: MCPLSPTool {
+enum WorkspaceDiagnosticPullTool: SimpleLSPTool {
     static let name = "lsp_workspace_diagnostic_pull"
     static let description = "Pull workspace-wide diagnostics (workspace/diagnostic)."
     static let inputSchema: [String: AnyCodable] = {
@@ -3040,16 +3027,13 @@ enum WorkspaceDiagnosticPullTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "workspace/diagnostic"
+    typealias Result = WorkspaceDiagnosticReport?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: WorkspaceDiagnosticParams) {
         let identifier = try MCPLSPBridge.optionalString(
             arguments: arguments,
             key: "identifier"
@@ -3068,22 +3052,13 @@ enum WorkspaceDiagnosticPullTool: MCPLSPTool {
             identifier: identifier,
             previousResultIds: previousResultIds
         )
-        do {
-            let result: WorkspaceDiagnosticReport? = try await session.sendRequest(
-                method: "workspace/diagnostic",
-                params: params,
-                resultType: WorkspaceDiagnosticReport?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, params)
     }
 }
 
 // MARK: - WorkspaceExecuteCommandTool
 
-enum WorkspaceExecuteCommandTool: MCPLSPTool {
+enum WorkspaceExecuteCommandTool: SimpleLSPTool {
     static let name = "lsp_workspace_execute_command"
     static let description = "Execute a server-side command (workspace/executeCommand)."
     static let inputSchema: [String: AnyCodable] = {
@@ -3105,16 +3080,13 @@ enum WorkspaceExecuteCommandTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "workspace/executeCommand"
+    typealias Result = AnyCodable?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: ExecuteCommandParams) {
         let command = try MCPLSPBridge.requireString(arguments: arguments, key: "command")
         let commandArguments: [AnyCodable]?
         if let rawAny = arguments["arguments"] {
@@ -3130,16 +3102,7 @@ enum WorkspaceExecuteCommandTool: MCPLSPTool {
             command: command,
             arguments: commandArguments
         )
-        do {
-            let result: AnyCodable? = try await session.sendRequest(
-                method: "workspace/executeCommand",
-                params: params,
-                resultType: AnyCodable?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, params)
     }
 }
 
