@@ -179,8 +179,8 @@ final class SessionReconnectCoordinator {
     /// .sessionStateBounded(id:)` queries the LOCAL calyx-session daemon
     /// only, so it can never meaningfully answer for a REMOTE session --
     /// the local daemon simply has no record of a session whose daemon
-    /// lives entirely on the remote host (see `CalyxWindowController
-    /// .performReconnect`'s grace-Task doc comment for the same root
+    /// lives entirely on the remote host (see this file's own
+    /// `performReconnect`'s grace-Task doc comment for the same root
     /// cause affecting establishment). `isRemote: true` therefore SKIPS
     /// the local daemon query entirely and treats the disconnect as
     /// retryable exactly like today's `.running`/`.unreachable` branch:
@@ -279,13 +279,70 @@ final class SessionReconnectCoordinator {
         // after the swap, used to mean a replacement surface whose
         // attach process dies right away against a still-unreachable
         // daemon is followed by another childExited decision that gets
-        // treated as attempt 1 again (0s backoff) instead of attempt 2+
-        // -- backoff never grows and maxReconnectAttempts is never
-        // reached, so giveUp never fires: an infinite full-speed
-        // reconnect loop (the user-visible pane flashing).
-        // Establishment now also requires reconnectGraceProbe(sessionID:)
-        // to report the daemon sees the session running with at least one
-        // attached client. A probe failure is fail-closed.
+        // treated as attempt 1 again (0s backoff, see
+        // `reconnectBackoffSeconds(forAttempt:)`) instead of attempt 2+
+        // -- backoff never grows and `maxReconnectAttempts` is never
+        // reached, so `giveUp` never fires: an infinite full-speed
+        // reconnect loop (the user-visible pane flashing). Deferring the
+        // reset behind a grace period instead lets a replacement that
+        // keeps dying accumulate attempts normally; only a replacement
+        // that survives past the grace period resets the count, so a
+        // later, unrelated disconnect still starts backing off from
+        // attempt 1 again (`markEstablished`'s original purpose).
+        //
+        // Round-18 finding G6: time alone still proved insufficient -- an
+        // attach process that dies SLOWER than the grace window (e.g. a
+        // ~2.5s die/respawn cycle against a daemon that keeps answering
+        // `.running`/`.unreachable`) got its attempt count reset every
+        // single cycle by the surface-identity check alone, since the
+        // surface itself was never swapped out again in that scenario.
+        // The count never advanced past 1, so `.giveUp` never fired: an
+        // unbounded reconnect loop at roughly the grace window's own
+        // cadence. Establishment now also requires
+        // `reconnectGraceProbe(sessionID:)` to report the daemon sees the
+        // session running with at least one attached client. A probe
+        // failure is fail-closed: skipping a legitimate reset only delays
+        // backoff recovery, while wrongly resetting reopens the unbounded
+        // loop.
+        //
+        // The cancel-before-replace inside `insert` below is cheap
+        // insurance, not the real mechanism: newSurfaceID is a fresh
+        // UUID on every call, so this key was never registered before
+        // and the cancel never actually matches an in-flight task.
+        // Superseded grace tasks are not proactively cancelled; they are
+        // outlived and neutralized by the SessionSurfaceMap re-check once
+        // the wait elapses: if this replacement was itself already
+        // swapped out again by a second reconnect within the grace
+        // window, `SessionSurfaceMap.shared.surfaceID(for:)` no longer
+        // equals newSurfaceID, so that second attempt now owns the
+        // attempt count, and this stale confirmation must not wrongly
+        // reset it out from under an unrelated, still-in-progress retry.
+        //
+        // P5 (remote sessions): `reconnectGraceProbe` queries the LOCAL
+        // calyx-session daemon, which can never have a matching
+        // SessionInfo for a REMOTE session (its daemon lives entirely on
+        // the remote host) -- the probe would forever report
+        // `.notEstablished`, so a remote pane's attempt count would never
+        // reset, and independent ssh disconnects occurring days apart
+        // would wrongly accumulate toward the same permanent
+        // `maxReconnectAttempts` give-up cap instead of each recovering
+        // independently. For a remote session (`isRemote`, captured from
+        // the same `host` read above before the leaf remap), establishment
+        // therefore falls back to the surface-survival check ALONE --
+        // exactly the pre-G6 semantics -- without ever consulting
+        // `reconnectGraceProbe`. Local semantics are unchanged: the probe
+        // is still required. ACCEPTED TRADEOFF: a positive LOCAL probe of
+        // a REMOTE session is structurally impossible in v1 (no local
+        // knowledge of remote daemon state), so the G6 unbounded-slow-loop
+        // risk (an attach process dying slower than the grace window keeps
+        // resetting the attempt count every cycle) is knowingly accepted,
+        // unmitigated, for remote panes -- bounded in practice by ssh's
+        // own connection failures being comparatively slow (seconds, not
+        // the sub-second churn G6's local-daemon scenario produced). A
+        // second, adjacent v1 limitation follows from the same root cause:
+        // see `SessionReconnectCoordinator.childExited`'s doc comment for
+        // why a genuinely-exited remote session takes the reconnect-
+        // attempts-then-giveUp route instead of the clean `.closePane`.
         reconnectEstablishGraceTasks.insert(newSurfaceID, task: Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(Self.reconnectEstablishGraceMilliseconds))
             guard let self else { return }
