@@ -2410,36 +2410,19 @@ enum CodeLensResolveTool: MCPLSPTool {
 
 // MARK: - InlayHintTool
 
-enum InlayHintTool: MCPLSPTool {
+enum InlayHintTool: SimpleLSPTool {
     static let name = "lsp_inlay_hint"
     static let description = "Get inlay hints (inferred type / parameter labels) for a range in a document."
     static let inputSchema: [String: AnyCodable] = rangeRequestSchema()
+    static let method = "textDocument/inlayHint"
+    typealias Result = [InlayHint]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: InlayHintParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = InlayHintParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            range: range
-        )
-        do {
-            let result: [InlayHint]? = try await session.sendRequest(
-                method: "textDocument/inlayHint",
-                params: params,
-                resultType: [InlayHint]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, InlayHintParams(textDocument: TextDocumentIdentifier(uri: uri), range: range))
     }
 }
 
@@ -2711,36 +2694,19 @@ enum SemanticTokensFullTool: SimpleLSPTool {
 
 // MARK: - SemanticTokensRangeTool
 
-enum SemanticTokensRangeTool: MCPLSPTool {
+enum SemanticTokensRangeTool: SimpleLSPTool {
     static let name = "lsp_semantic_tokens_range"
     static let description = "Get semantic tokens for a range in a document (textDocument/semanticTokens/range)."
     static let inputSchema: [String: AnyCodable] = rangeRequestSchema()
+    static let method = "textDocument/semanticTokens/range"
+    typealias Result = SemanticTokens?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: SemanticTokensRangeParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = SemanticTokensRangeParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            range: range
-        )
-        do {
-            let result: SemanticTokens? = try await session.sendRequest(
-                method: "textDocument/semanticTokens/range",
-                params: params,
-                resultType: SemanticTokens?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, SemanticTokensRangeParams(textDocument: TextDocumentIdentifier(uri: uri), range: range))
     }
 }
 
@@ -2882,7 +2848,7 @@ enum DocumentColorTool: SimpleLSPTool {
 
 // MARK: - ColorPresentationTool
 
-enum ColorPresentationTool: MCPLSPTool {
+enum ColorPresentationTool: SimpleLSPTool {
     static let name = "lsp_color_presentation"
     static let description = "Get textual color presentations (hex / rgba labels) for a color at a range."
     static let inputSchema: [String: AnyCodable] = rangeRequestSchema(
@@ -2896,18 +2862,14 @@ enum ColorPresentationTool: MCPLSPTool {
         ],
         extraRequired: ["color"]
     )
+    static let method = "textDocument/colorPresentation"
+    typealias Result = [ColorPresentation]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: ColorPresentationParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         guard let colorAny = arguments["color"] else {
             throw MCPLSPBridgeError.missingArgument("color")
         }
@@ -2921,16 +2883,7 @@ enum ColorPresentationTool: MCPLSPTool {
             color: color,
             range: range
         )
-        do {
-            let result: [ColorPresentation]? = try await session.sendRequest(
-                method: "textDocument/colorPresentation",
-                params: params,
-                resultType: [ColorPresentation]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
