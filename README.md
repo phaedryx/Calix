@@ -2,6 +2,8 @@
 
 A macOS 26+ native terminal application built on [libghostty](https://github.com/ghostty-org/ghostty) with Liquid Glass UI.
 
+> **Naming note**: The app is locally named **Calix** (bundle ID, scheme, CLI). The upstream GitHub repo, Homebrew tap, Sparkle update feed, and docs domain below intentionally remain under the original **Calyx** name, so don't be surprised by the mix in the instructions below.
+
 **Documentation**: [help.getcalyx.app](https://help.getcalyx.app)
 
 **Contributing**: Bug reports and feature ideas are welcome as issues; external pull requests are not accepted. See [CONTRIBUTING.md](CONTRIBUTING.md)
