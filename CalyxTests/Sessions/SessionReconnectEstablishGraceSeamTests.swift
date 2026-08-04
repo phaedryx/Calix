@@ -148,7 +148,7 @@ final class SessionReconnectEstablishGraceSeamTests: XCTestCase {
         // subject (the grace-period wait/surface-identity check) from G6's
         // separate probe contract, which `SessionReconnectGracePositiveSignalSeamTests`
         // covers directly.
-        fixture.controller._reconnectGraceProbeForTesting = { .established }
+        fixture.controller._sessionReconnectCoordinatorForTesting._reconnectGraceProbeForTesting = { .established }
 
         fixture.controller.handleSessionReconnectDecision(
             surfaceID: fixture.trackedLeafID,

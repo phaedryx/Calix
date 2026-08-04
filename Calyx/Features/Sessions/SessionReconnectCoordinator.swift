@@ -23,6 +23,64 @@
 
 import Foundation
 
+/// Reconnect-flashing-bug fix: narrow `#if DEBUG` override hook for
+/// `SessionReconnectCoordinator.reconnectEstablishGraceMilliseconds`,
+/// mirroring `SessionDaemonClientBoundTimeoutOverrides`'s identical
+/// shape/reasoning exactly. `nil` (the default) means "use the
+/// production value" (2000ms); a test sets a tiny, distinguishable
+/// value so it can assert the grace-period wait's plumbing without
+/// waiting out the real one. `nonisolated(unsafe)` is sound because the
+/// only production reader is that computed property, and every test
+/// that sets it resets it back to `nil` in its own `tearDown()`. Name
+/// kept as `CalyxWindowControllerReconnectGraceOverrides` even after
+/// this move -- several tests reference it by that name directly.
+#if DEBUG
+enum CalyxWindowControllerReconnectGraceOverrides {
+    nonisolated(unsafe) static var reconnectEstablishGraceMilliseconds: UInt64?
+}
+#endif
+
+/// Round-18 finding G6: what `performReconnect`'s grace `Task` learns from
+/// `reconnectGraceProbe(sessionID:)` before calling `markEstablished`. Time
+/// alone (the grace-period wait) plus surface identity alone is not
+/// positive evidence the replacement is actually connected -- an attach
+/// process that dies SLOWER than the grace window keeps resetting the
+/// attempt count every cycle without ever advancing it, so `.giveUp` never
+/// fires. `.established` requires the daemon to report the session
+/// `Running` with at least one attached client; anything else, including a
+/// probe failure, is `.notEstablished`.
+enum ReconnectGraceProbeResult: Sendable, Equatable {
+    case established
+    case notEstablished
+}
+
+/// The coordinator's own view of `CalyxWindowController.performReconnect`'s
+/// FFI/surface-swap half, handed back across `SessionReconnectSurfaceSwapping`
+/// so the coordinator never needs to know what a `Tab`/`SessionRef`/
+/// `SurfaceView` is.
+struct ReconnectSurfaceSwapResult {
+    let newSurfaceID: UUID
+    /// `tab.sessionRefs[oldSurfaceID]?.host != nil`, read by the delegate
+    /// implementation, so the coordinator's grace-establish branch works
+    /// without ever knowing what a Tab/SessionRef is.
+    let isRemote: Bool
+}
+
+/// Delegate boundary between `SessionReconnectCoordinator`'s timing/dedup/
+/// give-up logic and `CalyxWindowController`'s actual FFI surface swap --
+/// the coordinator calls back into the controller for this ONE thing only,
+/// never for timing/dedup/give-up, which stay entirely inside the
+/// coordinator.
+@MainActor
+protocol SessionReconnectSurfaceSwapping: AnyObject {
+    /// Command synthesis, tab.registry.createSurface, splitTree/sessionRefs/
+    /// SessionSurfaceMap/CommandLogStore remap, reconnectingSurfaceIDs-guarded
+    /// destroy of oldSurfaceID -- i.e. today's performReconnect body minus its
+    /// grace-Task tail. nil on failure, mirroring performReconnect's early
+    /// returns exactly.
+    func performReconnectSurfaceSwap(oldSurfaceID: UUID, sessionID: String) -> ReconnectSurfaceSwapResult?
+}
+
 enum SessionReconnectDecision: Sendable, Equatable {
     /// The session actually ended — close the pane normally (kill
     /// semantics: the daemon confirmed the child process is gone, so
@@ -66,6 +124,14 @@ final class SessionReconnectCoordinator {
     private let surfaceMap: SessionSurfaceMap
     private let onDecision: (UUID, SessionReconnectDecision) -> Void
 
+    /// The one call the coordinator makes back into
+    /// `CalyxWindowController` -- the actual FFI surface swap. Never
+    /// consulted for timing/dedup/give-up, which stay entirely inside
+    /// this coordinator. Set once, alongside `onDecision`, in
+    /// `CalyxWindowController`'s `sessionReconnectCoordinator` lazy-var
+    /// init.
+    weak var surfaceSwapDelegate: SessionReconnectSurfaceSwapping?
+
     /// Consecutive reconnect-attempt count keyed by sessionID (not
     /// surfaceID): a reconnect replaces the surface, so tracking by
     /// surfaceID would silently reset backoff on every single
@@ -80,6 +146,17 @@ final class SessionReconnectCoordinator {
     /// separate attempt-count increments / decisions for what is really
     /// one disconnect.
     private var inFlightSurfaceIDs: Set<UUID> = []
+
+    /// Reconnect-flashing-bug fix: `performReconnect`'s deferred-reset
+    /// confirmation `Task` per replacement surface, keyed by the NEW
+    /// surfaceID (not sessionID) so two different reconnects never
+    /// collide on the same key. See `performReconnect`'s doc comment for
+    /// why the `markEstablished(sessionID:)` reset itself is deferred
+    /// behind a grace period rather than firing immediately. Cancelled
+    /// and cleared via `cancelAllReconnectWork()`, called from
+    /// `CalyxWindowController.windowWillClose` alongside its own
+    /// per-window `Task`-dictionary discipline.
+    private var reconnectEstablishGraceTasks = KeyedTaskRegistry<UUID>()
 
     init(
         daemonClient: SessionDaemonClientProtocol,
@@ -167,6 +244,143 @@ final class SessionReconnectCoordinator {
     func markClosed(sessionID: String) {
         attemptCounts[sessionID] = nil
     }
+
+    /// Waits out `attempt`'s backoff delay, then re-attaches. A stale
+    /// `oldSurfaceID` (the pane was closed by the user in the meantime) is
+    /// handled by `performReconnectSurfaceSwap`'s own `findTab` lookup
+    /// coming back `nil`.
+    func scheduleReconnect(oldSurfaceID: UUID, sessionID: String, attempt: Int) {
+        let delaySeconds = Self.reconnectBackoffSeconds(forAttempt: attempt)
+        Task { [weak self] in
+            if delaySeconds > 0 {
+                try? await Task.sleep(for: .seconds(delaySeconds))
+            }
+            self?.performReconnect(oldSurfaceID: oldSurfaceID, sessionID: sessionID)
+        }
+    }
+
+    /// Delegates the actual FFI surface swap to `surfaceSwapDelegate`,
+    /// then owns the deferred-reset grace `Task` for the replacement --
+    /// see the grace-Task block's own comment for the flashing-bug
+    /// history this timing exists to fix. A `nil` result from the
+    /// delegate (surface creation failed, or the pane was closed by the
+    /// user in the meantime) is a no-op, mirroring the delegate's own
+    /// early-return contract exactly.
+    private func performReconnect(oldSurfaceID: UUID, sessionID: String) {
+        guard let result = surfaceSwapDelegate?.performReconnectSurfaceSwap(
+            oldSurfaceID: oldSurfaceID, sessionID: sessionID
+        ) else { return }
+        let newSurfaceID = result.newSurfaceID
+        let isRemote = result.isRemote
+
+        // HIGH-SPEED RECONNECT FLASHING BUG (see
+        // SessionReconnectAttemptResetTimingTests's header comment):
+        // resetting sessionID's attempt count immediately here, right
+        // after the swap, used to mean a replacement surface whose
+        // attach process dies right away against a still-unreachable
+        // daemon is followed by another childExited decision that gets
+        // treated as attempt 1 again (0s backoff) instead of attempt 2+
+        // -- backoff never grows and maxReconnectAttempts is never
+        // reached, so giveUp never fires: an infinite full-speed
+        // reconnect loop (the user-visible pane flashing).
+        // Establishment now also requires reconnectGraceProbe(sessionID:)
+        // to report the daemon sees the session running with at least one
+        // attached client. A probe failure is fail-closed.
+        reconnectEstablishGraceTasks.insert(newSurfaceID, task: Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(Self.reconnectEstablishGraceMilliseconds))
+            guard let self else { return }
+            if !Task.isCancelled, self.surfaceMap.surfaceID(for: sessionID) == newSurfaceID {
+                if isRemote {
+                    self.markEstablished(sessionID: sessionID)
+                } else if await self.reconnectGraceProbe(sessionID: sessionID) == .established {
+                    self.markEstablished(sessionID: sessionID)
+                }
+            }
+            self.reconnectEstablishGraceTasks.removeValue(forKey: newSurfaceID)
+        })
+    }
+
+    /// Cancels every in-flight reconnect-establish grace `Task`. Called
+    /// from `CalyxWindowController.windowWillClose` alongside its own
+    /// per-window `Task`-dictionary teardown.
+    func cancelAllReconnectWork() {
+        reconnectEstablishGraceTasks.cancelAll()
+    }
+
+    /// Exponential backoff for reconnect attempts, capped at 30s:
+    /// attempt 1 reconnects immediately (0s); attempts 2-6 wait
+    /// 1/2/4/8/16s; attempt 7+ waits the 30s cap. Keeps a persistently
+    /// unreachable daemon from spinning the pane in a tight retry loop
+    /// while still reconnecting instantly for the common case (the
+    /// attach process merely disconnected once).
+    private static func reconnectBackoffSeconds(forAttempt attempt: Int) -> Double {
+        guard attempt > 1 else { return 0 }
+        return min(30.0, pow(2.0, Double(attempt - 2)))
+    }
+
+    /// How long `performReconnect`'s confirmation `Task` waits before
+    /// resetting a replacement surface's session's attempt count (see
+    /// that method's doc comment for why the reset is deferred at all).
+    /// Production default 2000ms: long enough that a replacement whose
+    /// attach process dies right away (the flashing bug's own failure
+    /// mode) is very unlikely to still look "alive" by the time this
+    /// fires, without leaving a legitimately-recovered session's attempt
+    /// count wrongly nonzero for long after it's actually fine again.
+    /// Same `#if DEBUG`-only override seam as `SessionDaemonClientProtocol
+    /// .daemonQueryBoundTimeoutSeconds`.
+    private static var reconnectEstablishGraceMilliseconds: UInt64 {
+        #if DEBUG
+        if let override = CalyxWindowControllerReconnectGraceOverrides.reconnectEstablishGraceMilliseconds {
+            return override
+        }
+        #endif
+        return 2000
+    }
+
+    /// Round-18 G6: positive-evidence check `performReconnect`'s grace
+    /// `Task` consults immediately before `markEstablished`, alongside
+    /// (not instead of) the existing surface-identity check -- see that
+    /// call site's doc comment for why time and surface identity alone
+    /// are insufficient. Mirrors `CalyxWindowController
+    /// .createReconnectSurface`'s hook-first/real-fallback shape: under
+    /// `#if DEBUG`, a set `_reconnectGraceProbeForTesting` hook is
+    /// consulted first, with a throwing hook collapsed to
+    /// `.notEstablished` (fail-closed) rather than propagated. The real
+    /// fallback reuses the existing bounded `listAllBounded()` race
+    /// (already used by `SessionBrowserModel.refresh()`/`AppDelegate
+    /// .fetchSessionsForAgentResume()`) against the same
+    /// `SessionDaemonClient.shared` singleton `SessionReconnectCoordinator`
+    /// already wires in, rather than adding a second daemon-query
+    /// primitive. `.established` requires a matching `SessionInfo` whose
+    /// `state == .running` AND `attachedClients >= 1`; a missing match,
+    /// `.exited`, zero attached clients, or `listAllBounded()`'s own
+    /// already-bounded degrade-to-`[]` all fall through to
+    /// `.notEstablished` for free.
+    private func reconnectGraceProbe(sessionID: String) async -> ReconnectGraceProbeResult {
+        #if DEBUG
+        if let hook = _reconnectGraceProbeForTesting {
+            return (try? await hook()) ?? .notEstablished
+        }
+        #endif
+        let sessions = await SessionDaemonClient.shared.listAllBounded()
+        guard let match = sessions.first(where: { $0.id == sessionID }) else {
+            return .notEstablished
+        }
+        return (match.state == .running && match.attachedClients >= 1) ? .established : .notEstablished
+    }
+
+    #if DEBUG
+    /// Test seam (round-18 G6 RED phase): when non-nil, called INSTEAD of
+    /// the real `SessionDaemonClient.shared.listAllBounded()` daemon query
+    /// inside `reconnectGraceProbe(sessionID:)`, mirroring
+    /// `CalyxWindowController._performReconnectSurfaceCreationHookForTesting`'s
+    /// exact hook-first/real-fallback style. A throwing hook is fail-closed
+    /// by construction: `reconnectGraceProbe(sessionID:)` treats it exactly
+    /// like an explicit `.notEstablished` answer. `nil` (the default)
+    /// leaves production behavior unchanged. DO NOT use from production
+    /// code.
+    var _reconnectGraceProbeForTesting: (() async throws -> ReconnectGraceProbeResult)?
+    #endif
 
     #if DEBUG
     /// Test seam (reconnect-flashing-bug RED phase): directly seeds

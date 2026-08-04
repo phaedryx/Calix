@@ -183,7 +183,7 @@ final class SessionReconnectGracePositiveSignalSeamTests: XCTestCase {
         let newSurfaceID = UUID()
         fixture.tab.registry._testInsert(view: SurfaceView(frame: .zero), id: newSurfaceID)
         fixture.controller._performReconnectSurfaceCreationHookForTesting = { newSurfaceID }
-        fixture.controller._reconnectGraceProbeForTesting = probe
+        fixture.controller._sessionReconnectCoordinatorForTesting._reconnectGraceProbeForTesting = probe
 
         fixture.controller.handleSessionReconnectDecision(
             surfaceID: fixture.trackedLeafID,

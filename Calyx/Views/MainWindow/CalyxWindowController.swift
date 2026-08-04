@@ -9,35 +9,6 @@ private let logger = Logger(
     category: "CalyxWindowController"
 )
 
-/// Reconnect-flashing-bug fix: narrow `#if DEBUG` override hook for
-/// `CalyxWindowController.reconnectEstablishGraceMilliseconds`,
-/// mirroring `SessionDaemonClientBoundTimeoutOverrides`'s identical
-/// shape/reasoning exactly. `nil` (the default) means "use the
-/// production value" (2000ms); a test sets a tiny, distinguishable
-/// value so it can assert the grace-period wait's plumbing without
-/// waiting out the real one. `nonisolated(unsafe)` is sound because the
-/// only production reader is that computed property, and every test
-/// that sets it resets it back to `nil` in its own `tearDown()`.
-#if DEBUG
-enum CalyxWindowControllerReconnectGraceOverrides {
-    nonisolated(unsafe) static var reconnectEstablishGraceMilliseconds: UInt64?
-}
-#endif
-
-/// Round-18 finding G6: what `performReconnect`'s grace `Task` learns from
-/// `reconnectGraceProbe(sessionID:)` before calling `markEstablished`. Time
-/// alone (the grace-period wait) plus surface identity alone is not
-/// positive evidence the replacement is actually connected -- an attach
-/// process that dies SLOWER than the grace window keeps resetting the
-/// attempt count every cycle without ever advancing it, so `.giveUp` never
-/// fires. `.established` requires the daemon to report the session
-/// `Running` with at least one attached client; anything else, including a
-/// probe failure, is `.notEstablished`.
-enum ReconnectGraceProbeResult: Sendable, Equatable {
-    case established
-    case notEstablished
-}
-
 @MainActor
 class CalyxWindowController: NSWindowController, NSWindowDelegate {
     private(set) var windowSession: WindowSession
@@ -137,16 +108,6 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// from production code.
     var _childExitedTasksForTesting: KeyedTaskRegistry<UUID> { childExitedTasks }
     #endif
-    /// Reconnect-flashing-bug fix: `performReconnect`'s deferred-reset
-    /// confirmation `Task` per replacement surface, keyed by the NEW
-    /// surfaceID (not sessionID) so two different reconnects never
-    /// collide on the same key. See `performReconnect`'s doc comment for
-    /// why the `markEstablished(sessionID:)` reset itself is deferred
-    /// behind a grace period rather than firing immediately. Cancelled
-    /// and cleared in `windowWillClose` alongside `childExitedTasks`'s
-    /// other siblings, per this file's established per-window `Task`-
-    /// dictionary discipline.
-    private var reconnectEstablishGraceTasks = KeyedTaskRegistry<UUID>()
     private var hasMoreCommits = true
     private var reviewStores: [UUID: DiffReviewStore] = [:]
     private var clipboardConfirmationController: ClipboardConfirmationController?
@@ -156,17 +117,21 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// `handleShowChildExitedNotification`). One instance per window
     /// controller is enough — decisions are keyed by surface UUID, and
     /// each surface only ever belongs to one window.
-    private lazy var sessionReconnectCoordinator = SessionReconnectCoordinator(
-        daemonClient: SessionDaemonClient.shared,
-        surfaceMap: .shared,
-        onDecision: { [weak self] surfaceID, decision in
-            self?.handleSessionReconnectDecision(surfaceID: surfaceID, decision: decision)
-        }
-    )
+    private lazy var sessionReconnectCoordinator: SessionReconnectCoordinator = {
+        let coordinator = SessionReconnectCoordinator(
+            daemonClient: SessionDaemonClient.shared,
+            surfaceMap: .shared,
+            onDecision: { [weak self] surfaceID, decision in
+                self?.handleSessionReconnectDecision(surfaceID: surfaceID, decision: decision)
+            }
+        )
+        coordinator.surfaceSwapDelegate = self
+        return coordinator
+    }()
     #if DEBUG
     /// Test seam (reconnect-flashing-bug RED phase): when non-nil,
     /// called INSTEAD of the real `tab.registry.createSurface(...)` FFI
-    /// call inside `performReconnect`, mirroring `AppDelegate
+    /// call inside `performReconnectSurfaceSwap`, mirroring `AppDelegate
     /// ._createSurfaceWithPwdHookForTesting`'s exact style/reasoning (a
     /// real ghostty surface is confirmed unsafe to construct in this
     /// test host, see `AppDelegateAttachWindowTests`'s header comment
@@ -174,13 +139,14 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// newly created replacement surface (simulating success), or
     /// `nil` to simulate surface-creation failure. `nil` (the default)
     /// leaves production behavior unchanged: every guard/step around
-    /// this call in `performReconnect`, including the `markEstablished`
-    /// timing under test, remains real, unmodified production code. DO
-    /// NOT use from production code.
+    /// this call in `performReconnectSurfaceSwap`, including the
+    /// `SessionReconnectCoordinator`-owned `markEstablished` timing
+    /// under test, remains real, unmodified production code. DO NOT
+    /// use from production code.
     var _performReconnectSurfaceCreationHookForTesting: (() -> UUID?)?
 
     /// Test seam (P5, remote sessions, contract R3): when non-nil, called
-    /// with the synthesized `command` from inside `performReconnect`,
+    /// with the synthesized `command` from inside `performReconnectSurfaceSwap`,
     /// immediately after it is computed and before `createReconnectSurface`
     /// is invoked. Mirrors `AppDelegate
     /// ._createSurfaceWithPwdCommandObserverForTesting`'s identical
@@ -190,17 +156,6 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// that hook's signature. `nil` (the default) leaves production
     /// behavior unchanged. DO NOT use from production code.
     var _performReconnectCommandObserverForTesting: ((String?) -> Void)?
-
-    /// Test seam (round-18 G6 RED phase): when non-nil, called INSTEAD of
-    /// the real `SessionDaemonClient.shared.listAllBounded()` daemon query
-    /// inside `reconnectGraceProbe(sessionID:)`, mirroring
-    /// `_performReconnectSurfaceCreationHookForTesting`'s exact
-    /// hook-first/real-fallback style. A throwing hook is fail-closed by
-    /// construction: `reconnectGraceProbe(sessionID:)` treats it exactly
-    /// like an explicit `.notEstablished` answer. `nil` (the default)
-    /// leaves production behavior unchanged. DO NOT use from production
-    /// code.
-    var _reconnectGraceProbeForTesting: (() async throws -> ReconnectGraceProbeResult)?
 
     /// Test seam: read-only access to `sessionReconnectCoordinator`,
     /// mirroring `_childExitedTasksForTesting`'s/`_closingTabIDsForTesting`'s
@@ -241,15 +196,15 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     var _killSessionIfPersistentRouteObserverForTesting: ((String, String?) -> Void)?
     #endif
     /// Surface UUIDs currently being destroyed as part of
-    /// `performReconnect`'s surface swap (populated right before, and
+    /// `performReconnectSurfaceSwap` (populated right before, and
     /// cleared right after, its `destroySurface` call). Consulted by
     /// `killSessionIfPersistent` via `SessionCloseKillPolicy` — defense
-    /// in depth on top of `performReconnect`'s own ordering (re-pointing
+    /// in depth on top of `performReconnectSurfaceSwap`'s own ordering (re-pointing
     /// `SessionSurfaceMap` before destroying the old surface) — so a
     /// `destroySurface` call that synchronously re-enters
     /// `handleCloseSurfaceNotification` (ghostty's `close_surface`
     /// callback fires from inside `requestClose()`) can never self-kill
-    /// the very session `performReconnect` is reconnecting to.
+    /// the very session `performReconnectSurfaceSwap` is reconnecting to.
     private var reconnectingSurfaceIDs: Set<UUID> = []
 
     /// F4 (V05, HIGH, r4-fix-spec.md): a `.childExited` notification,
@@ -798,7 +753,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// decision is delegated to `SessionCloseKillPolicy` rather than
     /// just checking `hasSession`: a review found this method reachable,
     /// unconditionally, from two unsafe reentrant paths —
-    /// `performReconnect` (which destroys the OLD surface to make room
+    /// `performReconnectSurfaceSwap` (which destroys the OLD surface to make room
     /// for the reconnected one — must not self-kill) and
     /// `windowWillClose`/quit teardown (must detach, not kill, so the
     /// session survives to be reattached on next launch; `isTerminating`
@@ -823,7 +778,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// an implicit default.
     /// `host` (P5, remote sessions): read from `tab.sessionRefs[surfaceID]
     /// ?.host` BEFORE this method's own `tab.sessionRefs[surfaceID] = nil`
-    /// clears the entry two lines later -- exactly like `performReconnect`'s
+    /// clears the entry two lines later -- exactly like `performReconnectSurfaceSwap`'s
     /// own identical read of the same storage (see that method's doc
     /// comment). `nil` routes through the LOCAL-only `kill(id:)` exactly
     /// as before this fix; non-nil routes through `killRemote(host:
@@ -2555,7 +2510,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         case .closePane:
             closeDeadPersistentSessionSurface(surfaceID: surfaceID)
         case .reconnect(let sessionID, let attempt):
-            scheduleReconnect(surfaceID: surfaceID, sessionID: sessionID, attempt: attempt)
+            sessionReconnectCoordinator.scheduleReconnect(oldSurfaceID: surfaceID, sessionID: sessionID, attempt: attempt)
         case .giveUp:
             handleReconnectGiveUp(surfaceID: surfaceID)
         }
@@ -2718,20 +2673,6 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         surfaceView.addSubview(overlay)
     }
 
-    /// Waits out `attempt`'s backoff delay, then re-attaches. A stale
-    /// `surfaceID` (the pane was closed by the user in the meantime) is
-    /// handled by `performReconnect`'s own `findTab` lookup coming back
-    /// `nil`.
-    private func scheduleReconnect(surfaceID: UUID, sessionID: String, attempt: Int) {
-        let delaySeconds = Self.reconnectBackoffSeconds(forAttempt: attempt)
-        Task { [weak self] in
-            if delaySeconds > 0 {
-                try? await Task.sleep(for: .seconds(delaySeconds))
-            }
-            self?.performReconnect(oldSurfaceID: surfaceID, sessionID: sessionID)
-        }
-    }
-
     /// Re-runs `calyx-session attach --create` for `sessionID` in a
     /// fresh surface, then swaps it in for `oldSurfaceID` everywhere
     /// that referenced it: the split tree (`SplitTree.remapLeafIDs`,
@@ -2760,7 +2701,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
     /// layer of defense in `killSessionIfPersistent` regardless of this
     /// ordering.
     /// Thin wrapper around the one actually-unsafe-to-test call
-    /// `performReconnect` makes (`tab.registry.createSurface`, a real
+    /// `performReconnectSurfaceSwap` makes (`tab.registry.createSurface`, a real
     /// ghostty FFI surface), mirroring `AppDelegate.createRegistrySurface`'s
     /// identical wrapper/reasoning, so
     /// `_performReconnectSurfaceCreationHookForTesting` can intercept
@@ -2774,204 +2715,6 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         }
         #endif
         return tab.registry.createSurface(app: app, config: config, pwd: pwd, command: command)
-    }
-
-    /// Round-18 G6: positive-evidence check `performReconnect`'s grace
-    /// `Task` consults immediately before `markEstablished`, alongside
-    /// (not instead of) the existing surface-identity check -- see that
-    /// call site's doc comment for why time and surface identity alone
-    /// are insufficient. Mirrors `createReconnectSurface`'s
-    /// hook-first/real-fallback shape: under `#if DEBUG`, a set
-    /// `_reconnectGraceProbeForTesting` hook is consulted first, with a
-    /// throwing hook collapsed to `.notEstablished` (fail-closed) rather
-    /// than propagated. The real fallback reuses the existing bounded
-    /// `listAllBounded()` race (already used by
-    /// `SessionBrowserModel.refresh()`/`AppDelegate
-    /// .fetchSessionsForAgentResume()`) against the same
-    /// `SessionDaemonClient.shared` singleton `sessionReconnectCoordinator`
-    /// already wires in, rather than adding a second daemon-query
-    /// primitive. `.established` requires a matching `SessionInfo` whose
-    /// `state == .running` AND `attachedClients >= 1`; a missing match,
-    /// `.exited`, zero attached clients, or `listAllBounded()`'s own
-    /// already-bounded degrade-to-`[]` all fall through to
-    /// `.notEstablished` for free.
-    private func reconnectGraceProbe(sessionID: String) async -> ReconnectGraceProbeResult {
-        #if DEBUG
-        if let hook = _reconnectGraceProbeForTesting {
-            return (try? await hook()) ?? .notEstablished
-        }
-        #endif
-        let sessions = await SessionDaemonClient.shared.listAllBounded()
-        guard let match = sessions.first(where: { $0.id == sessionID }) else {
-            return .notEstablished
-        }
-        return (match.state == .running && match.attachedClients >= 1) ? .established : .notEstablished
-    }
-
-    private func performReconnect(oldSurfaceID: UUID, sessionID: String) {
-        guard let tab = findTab(surfaceID: oldSurfaceID) else { return }
-        guard let app = GhosttyAppController.shared.app, let window = self.window else { return }
-
-        // Read BEFORE the leaf remap below overwrites tab.sessionRefs'
-        // old key -- tab.sessionRefs is keyed by leaf (== surface) UUID,
-        // the same convention AppDelegate.restoreTabSurfaces/
-        // createSurfaceWithPwd already rely on.
-        let host = tab.sessionRefs[oldSurfaceID]?.host
-        let command: String
-        if let host {
-            command = SessionCommandSynthesizer.remoteAttachCommand(
-                host: host, sessionID: sessionID, cwd: tab.pwd ?? NSHomeDirectory()
-            )
-        } else {
-            guard let localCommand = SessionCommandSynthesizer.reattachCommand(sessionID: sessionID, cwd: tab.pwd ?? NSHomeDirectory()) else {
-                logger.error("No calyx-session binary resolvable; cannot reconnect session \(sessionID, privacy: .public)")
-                return
-            }
-            command = localCommand
-        }
-        #if DEBUG
-        _performReconnectCommandObserverForTesting?(command)
-        #endif
-
-        var config = GhosttyFFI.surfaceConfigNew()
-        config.scale_factor = Double(window.backingScaleFactor)
-
-        guard let newSurfaceID = createReconnectSurface(tab: tab, app: app, config: config, pwd: tab.pwd, command: command) else {
-            logger.error("Failed to create reconnect surface for session \(sessionID, privacy: .public)")
-            return
-        }
-
-        let mapping = [oldSurfaceID: newSurfaceID]
-        tab.splitTree = tab.splitTree.remapLeafIDs(mapping)
-        tab.sessionRefs = tab.sessionRefs.remappingKeys(mapping)
-        SessionSurfaceMap.shared.replaceSurface(old: oldSurfaceID, new: newSurfaceID)
-        CommandLogStore.shared.remapSurface(old: oldSurfaceID, new: newSurfaceID)
-
-        reconnectingSurfaceIDs.insert(oldSurfaceID)
-        tab.registry.destroySurface(oldSurfaceID)
-        reconnectingSurfaceIDs.remove(oldSurfaceID)
-
-        // HIGH-SPEED RECONNECT FLASHING BUG (see
-        // SessionReconnectAttemptResetTimingTests's header comment):
-        // resetting sessionID's attempt count immediately here, right
-        // after the swap, used to mean a replacement surface whose
-        // attach process dies right away against a still-unreachable
-        // daemon is followed by another childExited decision that gets
-        // treated as attempt 1 again (0s backoff, see
-        // `reconnectBackoffSeconds(forAttempt:)`) instead of attempt 2+
-        // -- backoff never grows and `maxReconnectAttempts` is never
-        // reached, so `giveUp` never fires: an infinite full-speed
-        // reconnect loop (the user-visible pane flashing). Deferring the
-        // reset behind a grace period instead lets a replacement that
-        // keeps dying accumulate attempts normally; only a replacement
-        // that survives past the grace period resets the count, so a
-        // later, unrelated disconnect still starts backing off from
-        // attempt 1 again (`markEstablished`'s original purpose).
-        //
-        // Round-18 finding G6: time alone still proved insufficient -- an
-        // attach process that dies SLOWER than the grace window (e.g. a
-        // ~2.5s die/respawn cycle against a daemon that keeps answering
-        // `.running`/`.unreachable`) got its attempt count reset every
-        // single cycle by the surface-identity check alone, since the
-        // surface itself was never swapped out again in that scenario.
-        // The count never advanced past 1, so `.giveUp` never fired: an
-        // unbounded reconnect loop at roughly the grace window's own
-        // cadence. Establishment now also requires
-        // `reconnectGraceProbe(sessionID:)` to report the daemon sees the
-        // session running with at least one attached client. A probe
-        // failure is fail-closed: skipping a legitimate reset only delays
-        // backoff recovery, while wrongly resetting reopens the unbounded
-        // loop.
-        //
-        // The cancel-before-replace inside `insert` below is cheap
-        // insurance, not the real mechanism: newSurfaceID is a fresh
-        // UUID on every call, so this key was never registered before
-        // and the cancel never actually matches an in-flight task.
-        // Superseded grace tasks are not proactively cancelled; they are
-        // outlived and neutralized by the SessionSurfaceMap re-check once
-        // the wait elapses: if this replacement was itself already
-        // swapped out again by a second reconnect within the grace
-        // window, `SessionSurfaceMap.shared.surfaceID(for:)` no longer
-        // equals newSurfaceID, so that second attempt now owns the
-        // attempt count, and this stale confirmation must not wrongly
-        // reset it out from under an unrelated, still-in-progress retry.
-        //
-        // P5 (remote sessions): `reconnectGraceProbe` queries the LOCAL
-        // calyx-session daemon, which can never have a matching
-        // SessionInfo for a REMOTE session (its daemon lives entirely on
-        // the remote host) -- the probe would forever report
-        // `.notEstablished`, so a remote pane's attempt count would never
-        // reset, and independent ssh disconnects occurring days apart
-        // would wrongly accumulate toward the same permanent
-        // `maxReconnectAttempts` give-up cap instead of each recovering
-        // independently. For a remote session (`isRemote`, captured from
-        // the same `host` read above before the leaf remap), establishment
-        // therefore falls back to the surface-survival check ALONE --
-        // exactly the pre-G6 semantics -- without ever consulting
-        // `reconnectGraceProbe`. Local semantics are unchanged: the probe
-        // is still required. ACCEPTED TRADEOFF: a positive LOCAL probe of
-        // a REMOTE session is structurally impossible in v1 (no local
-        // knowledge of remote daemon state), so the G6 unbounded-slow-loop
-        // risk (an attach process dying slower than the grace window keeps
-        // resetting the attempt count every cycle) is knowingly accepted,
-        // unmitigated, for remote panes -- bounded in practice by ssh's
-        // own connection failures being comparatively slow (seconds, not
-        // the sub-second churn G6's local-daemon scenario produced). A
-        // second, adjacent v1 limitation follows from the same root cause:
-        // see `SessionReconnectCoordinator.childExited`'s doc comment for
-        // why a genuinely-exited remote session takes the reconnect-
-        // attempts-then-giveUp route instead of the clean `.closePane`.
-        let isRemote = host != nil
-        reconnectEstablishGraceTasks.insert(newSurfaceID, task: Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(Self.reconnectEstablishGraceMilliseconds))
-            guard let self else { return }
-            if !Task.isCancelled, SessionSurfaceMap.shared.surfaceID(for: sessionID) == newSurfaceID {
-                if isRemote {
-                    self.sessionReconnectCoordinator.markEstablished(sessionID: sessionID)
-                } else if await self.reconnectGraceProbe(sessionID: sessionID) == .established {
-                    self.sessionReconnectCoordinator.markEstablished(sessionID: sessionID)
-                }
-            }
-            self.reconnectEstablishGraceTasks.removeValue(forKey: newSurfaceID)
-        })
-
-        if tab.id == activeTab?.id {
-            splitContainerView?.updateLayout(tree: tab.splitTree)
-            if let newView = tab.registry.view(for: newSurfaceID) {
-                window.makeFirstResponder(newView)
-            }
-        }
-        requestSave()
-    }
-
-    /// Exponential backoff for reconnect attempts, capped at 30s:
-    /// attempt 1 reconnects immediately (0s); attempts 2-6 wait
-    /// 1/2/4/8/16s; attempt 7+ waits the 30s cap. Keeps a persistently
-    /// unreachable daemon from spinning the pane in a tight retry loop
-    /// while still reconnecting instantly for the common case (the
-    /// attach process merely disconnected once).
-    private static func reconnectBackoffSeconds(forAttempt attempt: Int) -> Double {
-        guard attempt > 1 else { return 0 }
-        return min(30.0, pow(2.0, Double(attempt - 2)))
-    }
-
-    /// How long `performReconnect`'s confirmation `Task` waits before
-    /// resetting a replacement surface's session's attempt count (see
-    /// that method's doc comment for why the reset is deferred at all).
-    /// Production default 2000ms: long enough that a replacement whose
-    /// attach process dies right away (the flashing bug's own failure
-    /// mode) is very unlikely to still look "alive" by the time this
-    /// fires, without leaving a legitimately-recovered session's attempt
-    /// count wrongly nonzero for long after it's actually fine again.
-    /// Same `#if DEBUG`-only override seam as `SessionDaemonClientProtocol
-    /// .daemonQueryBoundTimeoutSeconds`.
-    private static var reconnectEstablishGraceMilliseconds: UInt64 {
-        #if DEBUG
-        if let override = CalyxWindowControllerReconnectGraceOverrides.reconnectEstablishGraceMilliseconds {
-            return override
-        }
-        #endif
-        return 2000
     }
 
     @objc private func handleGotoSplitNotification(_ notification: Notification) {
@@ -3748,7 +3491,7 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         reviewStores.removeAll()
         expandTasks.cancelAll()
         childExitedTasks.cancelAll()
-        reconnectEstablishGraceTasks.cancelAll()
+        sessionReconnectCoordinator.cancelAllReconnectWork()
         refreshTask?.cancel()
         let gitChangesMonitor = gitChangesMonitor
         gitMonitorStopTask?.cancel()
@@ -4368,4 +4111,98 @@ class CalyxWindowController: NSWindowController, NSWindowDelegate {
         alert.runModal()
     }
 
+}
+
+extension CalyxWindowController: SessionReconnectSurfaceSwapping {
+    /// Re-runs `calyx-session attach --create` for `sessionID` in a
+    /// fresh surface, then swaps it in for `oldSurfaceID` everywhere
+    /// that referenced it: the split tree (`SplitTree.remapLeafIDs`,
+    /// the same contract `AppDelegate.restoreTabSurfaces` uses),
+    /// `tab.sessionRefs` (`remappingKeys`, so the next snapshot points
+    /// at the live leaf), and `SessionSurfaceMap` (`replaceSurface`).
+    /// `attach --create`'s idempotency is what makes this safe to retry
+    /// on a daemon that turned out to be merely unreachable rather than
+    /// truly gone.
+    ///
+    /// CRITICAL ordering (review finding): `SurfaceRegistry
+    /// .destroySurface(_:)` synchronously re-enters ghostty's
+    /// `close_surface` callback (`handleCloseSurfaceNotification` ->
+    /// `closeSurfaceAndCleanUp`) from inside `requestClose()`, *before*
+    /// this method returns. The remap/replace calls below run BEFORE
+    /// `destroySurface(oldSurfaceID)` specifically so that reentrant
+    /// call observes state that already points at `newSurfaceID`:
+    /// `SessionSurfaceMap.shared.sessionID(for: oldSurfaceID)` is
+    /// already `nil` (so `killSessionIfPersistent` naturally does not
+    /// kill), and `oldSurfaceID` is already absent from `tab.splitTree`
+    /// (so `SplitTree.remove(_:)` — verified by inspection — treats a
+    /// leaf ID it can't find as a no-op and returns an unchanged tree
+    /// with `focusTarget == nil`, so the reentrant `closeSurfaceAndCleanUp`
+    /// tail becomes a harmless redundant layout refresh, not tree
+    /// corruption). `reconnectingSurfaceIDs` adds a second, independent
+    /// layer of defense in `killSessionIfPersistent` regardless of this
+    /// ordering.
+    ///
+    /// Satisfies `SessionReconnectSurfaceSwapping` for
+    /// `sessionReconnectCoordinator`: returns `nil` on any failure (no
+    /// such tab, no ghostty app/window, no resolvable `calyx-session`
+    /// binary, surface-creation failure), mirroring this method's own
+    /// prior early-return contract exactly. The deferred-reset grace
+    /// `Task` that used to live at the end of this method (see the
+    /// "HIGH-SPEED RECONNECT FLASHING BUG"/round-18 G6 history in
+    /// `SessionReconnectCoordinator.performReconnect`'s doc comment) now
+    /// lives entirely in the coordinator, driven by the `isRemote`/
+    /// `newSurfaceID` this returns.
+    func performReconnectSurfaceSwap(oldSurfaceID: UUID, sessionID: String) -> ReconnectSurfaceSwapResult? {
+        guard let tab = findTab(surfaceID: oldSurfaceID) else { return nil }
+        guard let app = GhosttyAppController.shared.app, let window = self.window else { return nil }
+
+        // Read BEFORE the leaf remap below overwrites tab.sessionRefs'
+        // old key -- tab.sessionRefs is keyed by leaf (== surface) UUID,
+        // the same convention AppDelegate.restoreTabSurfaces/
+        // createSurfaceWithPwd already rely on.
+        let host = tab.sessionRefs[oldSurfaceID]?.host
+        let command: String
+        if let host {
+            command = SessionCommandSynthesizer.remoteAttachCommand(
+                host: host, sessionID: sessionID, cwd: tab.pwd ?? NSHomeDirectory()
+            )
+        } else {
+            guard let localCommand = SessionCommandSynthesizer.reattachCommand(sessionID: sessionID, cwd: tab.pwd ?? NSHomeDirectory()) else {
+                logger.error("No calyx-session binary resolvable; cannot reconnect session \(sessionID, privacy: .public)")
+                return nil
+            }
+            command = localCommand
+        }
+        #if DEBUG
+        _performReconnectCommandObserverForTesting?(command)
+        #endif
+
+        var config = GhosttyFFI.surfaceConfigNew()
+        config.scale_factor = Double(window.backingScaleFactor)
+
+        guard let newSurfaceID = createReconnectSurface(tab: tab, app: app, config: config, pwd: tab.pwd, command: command) else {
+            logger.error("Failed to create reconnect surface for session \(sessionID, privacy: .public)")
+            return nil
+        }
+
+        let mapping = [oldSurfaceID: newSurfaceID]
+        tab.splitTree = tab.splitTree.remapLeafIDs(mapping)
+        tab.sessionRefs = tab.sessionRefs.remappingKeys(mapping)
+        SessionSurfaceMap.shared.replaceSurface(old: oldSurfaceID, new: newSurfaceID)
+        CommandLogStore.shared.remapSurface(old: oldSurfaceID, new: newSurfaceID)
+
+        reconnectingSurfaceIDs.insert(oldSurfaceID)
+        tab.registry.destroySurface(oldSurfaceID)
+        reconnectingSurfaceIDs.remove(oldSurfaceID)
+
+        if tab.id == activeTab?.id {
+            splitContainerView?.updateLayout(tree: tab.splitTree)
+            if let newView = tab.registry.view(for: newSurfaceID) {
+                window.makeFirstResponder(newView)
+            }
+        }
+        requestSave()
+
+        return ReconnectSurfaceSwapResult(newSurfaceID: newSurfaceID, isRemote: host != nil)
+    }
 }
