@@ -1,21 +1,21 @@
-name: Calyx
+name: Calix
 options:
-  bundleIdPrefix: com.calyx
+  bundleIdPrefix: com.calix
   deploymentTarget:
     macOS: "26.0"
   xcodeVersion: "26.2"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 
-# DebugUITesting is a debug-type config used ONLY by the CalyxUITests
-# scheme's test action (see schemes.CalyxUITests.test.config below), so
-# the Calyx.app built for UI testing gets an isolated
-# PRODUCT_BUNDLE_IDENTIFIER (com.calyx.terminal.e2e, set below on the
-# Calyx target) distinct from the production com.calyx.terminal used by
+# DebugUITesting is a debug-type config used ONLY by the CalixUITests
+# scheme's test action (see schemes.CalixUITests.test.config below), so
+# the Calix.app built for UI testing gets an isolated
+# PRODUCT_BUNDLE_IDENTIFIER (com.calix.terminal.e2e, set below on the
+# Calix target) distinct from the production com.calix.terminal used by
 # every other config. This prevents LaunchServices from ever conflating
-# a locally-installed production Calyx.app with the UI-test-built one,
+# a locally-installed production Calix.app with the UI-test-built one,
 # which previously let XCUITest keystrokes leak into whichever app
-# LaunchServices considered the "real" com.calyx.terminal.
+# LaunchServices considered the "real" com.calix.terminal.
 configs:
   Debug: debug
   Release: release
@@ -49,11 +49,11 @@ packages:
     from: "1.5.0"
 
 targets:
-  Calyx:
+  Calix:
     type: application
     platform: macOS
     sources:
-      - path: Calyx
+      - path: Calix
         excludes:
           - "**/*.entitlements"
     postBuildScripts:
@@ -64,12 +64,12 @@ targets:
       - script: |
           mkdir -p "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin"
           # rm before cp: same stale-code-signature-cache SIGKILL risk as the Bundle Session Daemon script below.
-          rm -f "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calyx"
-          cp "${BUILT_PRODUCTS_DIR}/calyx" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calyx"
-        name: Bundle CalyxCLI
+          rm -f "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calix"
+          cp "${BUILT_PRODUCTS_DIR}/calix" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calix"
+        name: Bundle CalixCLI
       - script: |
           set -e
-          SESSION_BIN="${PROJECT_DIR}/build/session/calyx-session"
+          SESSION_BIN="${PROJECT_DIR}/build/session/calix-session"
           if [ -f "$SESSION_BIN" ]; then
             mkdir -p "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin"
             # rm before cp: overwriting the same inode in place leaves the
@@ -77,18 +77,18 @@ targets:
             # already been executed, and every later exec of it dies with
             # SIGKILL (field-verified: exit 137 at the bundle path, same
             # bytes run fine after an rm+cp re-copy created a fresh inode).
-            rm -f "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calyx-session"
-            cp "$SESSION_BIN" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calyx-session"
-            chmod 0755 "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calyx-session"
+            rm -f "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calix-session"
+            cp "$SESSION_BIN" "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calix-session"
+            chmod 0755 "${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/bin/calix-session"
           elif [ "${CONFIGURATION}" = "Release" ]; then
             # Hard error only for Release: a shipped build must carry the
             # session daemon. Every other config (Debug, DebugUITesting,
             # any future debug variant) warns and skips below, so e.g.
             # UI-test builds don't fail when build-session.sh was never run.
-            echo "error: build/session/calyx-session not found for a ${CONFIGURATION} build. Run scripts/build-session.sh before building Release."
+            echo "error: build/session/calix-session not found for a ${CONFIGURATION} build. Run scripts/build-session.sh before building Release."
             exit 1
           else
-            echo "warning: build/session/calyx-session not found. Run scripts/build-session.sh to enable persistent sessions in this ${CONFIGURATION} build. Skipping (feature stays gated off)."
+            echo "warning: build/session/calix-session not found. Run scripts/build-session.sh to enable persistent sessions in this ${CONFIGURATION} build. Skipping (feature stays gated off)."
           fi
         name: Bundle Session Daemon
       - script: |
@@ -99,13 +99,13 @@ targets:
           # signing step exists for them. rm before cp kept anyway for
           # parity with the other bundling steps' stale-inode rule.
           for REMOTE_ARCH in x86_64 aarch64; do
-            SRC="${PROJECT_DIR}/build/session/session-remote/${REMOTE_ARCH}/calyx-session"
+            SRC="${PROJECT_DIR}/build/session/session-remote/${REMOTE_ARCH}/calix-session"
             DEST_DIR="${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/session-remote/${REMOTE_ARCH}"
             if [ -f "$SRC" ]; then
               mkdir -p "$DEST_DIR"
-              rm -f "$DEST_DIR/calyx-session"
-              cp "$SRC" "$DEST_DIR/calyx-session"
-              chmod 0755 "$DEST_DIR/calyx-session"
+              rm -f "$DEST_DIR/calix-session"
+              cp "$SRC" "$DEST_DIR/calix-session"
+              chmod 0755 "$DEST_DIR/calix-session"
             elif [ "${CONFIGURATION}" = "Release" ]; then
               # Hard error only for Release: a shipped build must carry the
               # remote payloads. Every other config (Debug, DebugUITesting,
@@ -119,7 +119,7 @@ targets:
           done
         name: Bundle Remote Session Binaries
     info:
-      path: Calyx/Info.plist
+      path: Calix/Info.plist
       properties:
         CFBundleIconFile: AppIcon
         CFBundleShortVersionString: $(MARKETING_VERSION)
@@ -136,9 +136,9 @@ targets:
               - public.folder
         NSServices:
           - NSMenuItem:
-              default: Open in Calyx
-            NSMessage: openInCalyx
-            NSPortName: Calyx
+              default: Open in Calix
+            NSMessage: openInCalix
+            NSPortName: Calix
             NSRequiredContext:
               NSTextContent: FilePath
             NSSendTypes:
@@ -146,12 +146,12 @@ targets:
               - public.plain-text
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.calyx.terminal
-        PRODUCT_NAME: Calyx
+        PRODUCT_BUNDLE_IDENTIFIER: com.calix.terminal
+        PRODUCT_NAME: Calix
         MARKETING_VERSION: "0.32.1"
         CURRENT_PROJECT_VERSION: 58
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
-        CODE_SIGN_ENTITLEMENTS: Calyx/Calyx.entitlements
+        CODE_SIGN_ENTITLEMENTS: Calix/Calix.entitlements
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: ""
         ENABLE_HARDENED_RUNTIME: YES
@@ -162,7 +162,7 @@ targets:
         debuguitesting:
           # Exact-match key (case-insensitive) against the "DebugUITesting"
           # config name — applies ONLY to that config, not to Debug/Release.
-          PRODUCT_BUNDLE_IDENTIFIER: com.calyx.terminal.e2e
+          PRODUCT_BUNDLE_IDENTIFIER: com.calix.terminal.e2e
     dependencies:
       - framework: GhosttyKit.xcframework
         embed: false
@@ -170,41 +170,41 @@ targets:
       - sdk: WebKit.framework
       - sdk: UserNotifications.framework
       - package: Sparkle
-      - target: CalyxCLI
+      - target: CalixCLI
         embed: false
 
-  CalyxTests:
+  CalixTests:
     type: bundle.unit-test
     platform: macOS
     sources:
-      - path: CalyxTests
+      - path: CalixTests
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
     dependencies:
-      - target: Calyx
+      - target: Calix
 
-  CalyxUITests:
+  CalixUITests:
     type: bundle.ui-testing
     platform: macOS
     sources:
-      - path: CalyxUITests
+      - path: CalixUITests
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        TEST_TARGET_NAME: Calyx
+        TEST_TARGET_NAME: Calix
     dependencies:
-      - target: Calyx
+      - target: Calix
 
-  CalyxCLI:
+  CalixCLI:
     type: tool
     platform: macOS
     sources:
-      - path: CalyxCLI
+      - path: CalixCLI
     settings:
       base:
-        PRODUCT_NAME: calyx
-        PRODUCT_MODULE_NAME: CalyxCLI
+        PRODUCT_NAME: calix
+        PRODUCT_MODULE_NAME: CalixCLI
         SWIFT_VERSION: "6.2"
         MACOSX_DEPLOYMENT_TARGET: "26.0"
         CODE_SIGN_STYLE: Automatic
@@ -219,56 +219,56 @@ targets:
         product: ArgumentParser
 
 schemes:
-  Calyx:
+  Calix:
     build:
       targets:
-        Calyx: all
+        Calix: all
     run:
       config: Debug
     test:
       config: Debug
       targets:
-        # CalyxUITests is deliberately excluded here: this scheme's test
+        # CalixUITests is deliberately excluded here: this scheme's test
         # action only has one shared `config` for all listed targets, and
         # that config (Debug) builds the app-under-test with the
         # production PRODUCT_BUNDLE_IDENTIFIER. Running UI tests through
         # this scheme would silently reintroduce the bundle-ID collision
-        # that the isolated `CalyxUITests` scheme (test.config:
-        # DebugUITesting) exists to prevent. Use the CalyxUITests scheme
+        # that the isolated `CalixUITests` scheme (test.config:
+        # DebugUITesting) exists to prevent. Use the CalixUITests scheme
         # directly for UI tests.
-        - CalyxTests
-  CalyxTests:
+        - CalixTests
+  CalixTests:
     build:
       targets:
-        Calyx: [run, test]
-        CalyxTests: test
+        Calix: [run, test]
+        CalixTests: test
     test:
       config: Debug
       targets:
-        - CalyxTests
-  CalyxUITests:
+        - CalixTests
+  CalixUITests:
     build:
       targets:
-        Calyx: [run, test]
-        CalyxUITests: test
+        Calix: [run, test]
+        CalixUITests: test
     test:
-      # Builds the Calyx app-under-test with PRODUCT_BUNDLE_IDENTIFIER
-      # com.calyx.terminal.e2e (see the DebugUITesting config above),
-      # isolating it from the production com.calyx.terminal bundle ID.
+      # Builds the Calix app-under-test with PRODUCT_BUNDLE_IDENTIFIER
+      # com.calix.terminal.e2e (see the DebugUITesting config above),
+      # isolating it from the production com.calix.terminal bundle ID.
       config: DebugUITesting
       targets:
-        - CalyxUITests
-      # Propagates the invoking shell's CALYX_SESSION_BIN (a pre-built
-      # calyx-session path pinned by E2E suites, e.g.
+        - CalixUITests
+      # Propagates the invoking shell's CALIX_SESSION_BIN (a pre-built
+      # calix-session path pinned by E2E suites, e.g.
       # SessionBrowserAttachKillE2ETests.swift) into the .xctestrun's own
       # environment, so the test runner process sees it without a
       # manual PlistBuddy patch of the generated .xctestrun afterward.
       environmentVariables:
-        CALYX_SESSION_BIN: $(CALYX_SESSION_BIN)
-        # Same propagation rationale as CALYX_SESSION_BIN above:
-        # scripts/record-demo.sh's own `CALYX_DEMO_RECORDING=1` shell
+        CALIX_SESSION_BIN: $(CALIX_SESSION_BIN)
+        # Same propagation rationale as CALIX_SESSION_BIN above:
+        # scripts/record-demo.sh's own `CALIX_DEMO_RECORDING=1` shell
         # prefix does not otherwise reach the test runner process.
-        CALYX_DEMO_RECORDING: $(CALYX_DEMO_RECORDING)
+        CALIX_DEMO_RECORDING: $(CALIX_DEMO_RECORDING)
 
 fileGroups:
-  - Calyx-Bridging-Header.h
+  - Calix-Bridging-Header.h

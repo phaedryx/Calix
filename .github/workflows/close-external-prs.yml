@@ -34,7 +34,7 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           cat > comment.md <<'EOF'
-          Calyx does not accept external pull requests, so this is being closed automatically. If there is a bug or an idea behind it, please open an issue instead. See [CONTRIBUTING.md](https://github.com/yuuichieguchi/Calyx/blob/main/CONTRIBUTING.md) for the full policy.
+          Calix does not accept external pull requests, so this is being closed automatically. If there is a bug or an idea behind it, please open an issue instead. See [CONTRIBUTING.md](https://github.com/yuuichieguchi/Calyx/blob/main/CONTRIBUTING.md) for the full policy.
           EOF
           gh pr comment "$PR_URL" --body-file comment.md
           gh pr close "$PR_URL"

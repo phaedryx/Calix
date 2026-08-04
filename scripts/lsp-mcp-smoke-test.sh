@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
 # LSP MCP proxy smoke test.
-# Verifies the live Calyx MCP server: tools/list returns 77 entries
+# Verifies the live Calix MCP server: tools/list returns 77 entries
 # (7 IPC + 70 LSP), unknown tool surfaces an error, and a few tools
 # that don't need a real language server return well-formed JSON.
 #
 # Requires:
-# - Calyx running with AI Agent IPC enabled (Cmd+Shift+P -> Enable AI Agent IPC).
-# - ~/.claude.json updated (Calyx auto-writes the Bearer token there).
+# - Calix running with AI Agent IPC enabled (Cmd+Shift+P -> Enable AI Agent IPC).
+# - ~/.claude.json updated (Calix auto-writes the Bearer token there).
 # - jq for JSON parsing.
 
 set -uo pipefail
@@ -17,14 +17,14 @@ import json, sys
 with open('${HOME}/.claude.json') as f:
     data = json.load(f)
 servers = data.get('mcpServers') or {}
-calyx = servers.get('calyx-ipc') or {}
-hdrs = calyx.get('headers') or {}
+calix = servers.get('calix-ipc') or {}
+hdrs = calix.get('headers') or {}
 auth = hdrs.get('Authorization', '')
 print(auth.split()[1] if auth.startswith('Bearer ') else '')
 ")
 if [[ -z "${token}" ]]; then
-    echo "ERROR: could not extract calyx-ipc Bearer token from ~/.claude.json"
-    echo "Enable AI Agent IPC in Calyx first."
+    echo "ERROR: could not extract calix-ipc Bearer token from ~/.claude.json"
+    echo "Enable AI Agent IPC in Calix first."
     exit 1
 fi
 

@@ -2,10 +2,10 @@
 set -euo pipefail
 
 VERSION=$(grep 'MARKETING_VERSION' project.yml | grep -v '\$(' | sed 's/.*"\(.*\)"/\1/')
-APP_PATH="/tmp/CalyxRelease/Build/Products/Release/Calyx.app"
-ZIP_PATH="/tmp/Calyx.zip"
+APP_PATH="/tmp/CalixRelease/Build/Products/Release/Calix.app"
+ZIP_PATH="/tmp/Calix.zip"
 
-echo "=== Calyx Release v$VERSION ==="
+echo "=== Calix Release v$VERSION ==="
 
 # 1. Check required env vars
 echo "Checking required environment variables..."
@@ -19,25 +19,25 @@ echo "Generating Xcode project..."
 xcodegen generate
 echo "Xcode project generated."
 
-# 2.5. Build calyx-session (host binary + Linux remote payloads).
+# 2.5. Build calix-session (host binary + Linux remote payloads).
 # The "Bundle Session Daemon" / "Bundle Remote Session Binaries"
 # postBuildScripts in project.yml hard-fail a Release build when any of
 # these are missing, so this must run before xcodebuild.
-echo "Building calyx-session (host + Linux remote targets)..."
+echo "Building calix-session (host + Linux remote targets)..."
 scripts/build-session.sh --all
-echo "calyx-session build complete."
+echo "calix-session build complete."
 
 # 3. Build
-echo "Building Calyx (Release)..."
+echo "Building Calix (Release)..."
 xcodebuild \
-  -project Calyx.xcodeproj \
-  -scheme Calyx \
+  -project Calix.xcodeproj \
+  -scheme Calix \
   -configuration Release \
   ARCHS=arm64 \
   CODE_SIGN_IDENTITY="Developer ID Application: Yuuichi Eguchi (PQQBSRKD72)" \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM=PQQBSRKD72 \
-  -derivedDataPath /tmp/CalyxRelease \
+  -derivedDataPath /tmp/CalixRelease \
   clean build
 echo "Build succeeded."
 
@@ -96,22 +96,22 @@ done
 # 4. Sign the framework itself
 codesign --force --sign "$SIGN_IDENTITY" --timestamp "$SPARKLE_FW"
 
-# 4.5. Sign the bundled calyx-session host binary. cargo produces it
+# 4.5. Sign the bundled calix-session host binary. cargo produces it
 # only linker-adhoc-signed, and the outer app's non---deep signature
 # does not re-sign nested Mach-O files, so notarization needs this
 # explicit Developer ID + hardened runtime + timestamp signature.
 # The Linux payloads under Resources/session-remote/ are ELF, not
 # Mach-O: codesign cannot sign them and seals them as plain resources.
-SESSION_HOST_BIN="$APP_PATH/Contents/Resources/bin/calyx-session"
+SESSION_HOST_BIN="$APP_PATH/Contents/Resources/bin/calix-session"
 if [ ! -f "$SESSION_HOST_BIN" ]; then
-  echo "ERROR: bundled calyx-session not found at $SESSION_HOST_BIN"
+  echo "ERROR: bundled calix-session not found at $SESSION_HOST_BIN"
   exit 1
 fi
 codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime "$SESSION_HOST_BIN"
 
 # 5. Re-sign the outer app (inner re-signing invalidates outer seal)
 codesign --force --sign "$SIGN_IDENTITY" --timestamp --options runtime \
-  --entitlements Calyx/Calyx.entitlements "$APP_PATH"
+  --entitlements Calix/Calix.entitlements "$APP_PATH"
 echo "Sparkle framework and app signed."
 
 # 3.5d. Pre-notarization verification gate (spctl skipped — requires notarization)
@@ -153,8 +153,8 @@ echo "Final zip created at $ZIP_PATH."
 echo "Verifying final distributed artifact..."
 VERIFY_DIR=$(mktemp -d)
 ditto -x -k "$ZIP_PATH" "$VERIFY_DIR"
-codesign --verify --deep --strict "$VERIFY_DIR/Calyx.app"
-spctl --assess --type exec "$VERIFY_DIR/Calyx.app"
+codesign --verify --deep --strict "$VERIFY_DIR/Calix.app"
+spctl --assess --type exec "$VERIFY_DIR/Calix.app"
 rm -rf "$VERIFY_DIR"
 echo "Distributed artifact verification passed."
 
@@ -165,7 +165,7 @@ echo "Signing final zip with Sparkle EdDSA..."
 # enumeration reshuffles as sibling dirs come and go) and once matched the
 # legacy DSA *shell script* (Sparkle/bin/old_dsa_scripts/sign_update), which
 # blocks on stdin when called without a key file.
-SPARKLE_BIN="/tmp/CalyxRelease/SourcePackages/artifacts/sparkle/Sparkle/bin"
+SPARKLE_BIN="/tmp/CalixRelease/SourcePackages/artifacts/sparkle/Sparkle/bin"
 SPARKLE_SIGN="$SPARKLE_BIN/sign_update"
 if [ ! -x "$SPARKLE_SIGN" ]; then
   echo "ERROR: sign_update not found at $SPARKLE_SIGN."
@@ -192,7 +192,7 @@ fi
 RELEASE_BODY="## What's Changed
 $NOTES"
 gh release create "v$VERSION" "$ZIP_PATH" \
-  --title "Calyx v$VERSION" \
+  --title "Calix v$VERSION" \
   --notes "$RELEASE_BODY"
 echo "GitHub release v$VERSION created."
 
@@ -200,7 +200,7 @@ echo "GitHub release v$VERSION created."
 echo "Generating appcast..."
 GENERATE_APPCAST="$SPARKLE_BIN/generate_appcast"
 if [ -x "$GENERATE_APPCAST" ]; then
-  APPCAST_DIR="/tmp/CalyxAppcast"
+  APPCAST_DIR="/tmp/CalixAppcast"
   mkdir -p "$APPCAST_DIR"
   cp "$ZIP_PATH" "$APPCAST_DIR/"
   "$GENERATE_APPCAST" \

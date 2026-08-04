@@ -7,12 +7,12 @@ End-to-end verification run against rust-analyzer on the
 | # | Item | Status | Evidence |
 |---|------|--------|----------|
 | 1 | Build | OK | `xcodebuild build` returns `** BUILD SUCCEEDED **`, zero new Swift warnings. |
-| 2 | Unit tests | OK | `xcodebuild test -only-testing:CalyxTests` returns `** TEST SUCCEEDED **`, 1633+ tests pass across LSP / IPC / Bridge / Settings suites. |
+| 2 | Unit tests | OK | `xcodebuild test -only-testing:CalixTests` returns `** TEST SUCCEEDED **`, 1633+ tests pass across LSP / IPC / Bridge / Settings suites. |
 | 3 | Registry coverage | OK | `LSPServerRegistryTests` asserts all 15 built-in entries; `swift test` green. |
 | 4 | Bridge coverage | OK | `MCPLSPBridgeTests`, `MCPLSPBridgeExtendedToolsTests`, `MCPLSPBridgeHierarchyToolsTests`, `MCPLSPBridgeInfoClusterATests`, `MCPLSPBridgeInfoClusterBTests`, `MCPLSPBridgeEditWorkspaceToolsTests`, `MCPLSPBridgeFileOpsAndAITests`, `MCPLSPBridgeNotebookToolsTests` all green. |
 | 5 | E2E real LSP | OK | `lsp_hover` against `crates/mini-hdfs/src/client.rs:13:11` returned `pub struct FileEntry { name: String, is_directory: bool, size: u64 }` + doc comment + memory layout, identical shape to VSCode's Hover. `lsp_definition` returned a `LocationLink` array; `lsp_workspace_symbol query=FileEntry` returned two matches across the workspace. |
 | 6 | AI-specific tools | OK | `lsp_hover_bundle` returned the merged `{hover, definition, surrounding_code}` payload in one round trip. `lsp_batch` pipelined `lsp_hover` + `lsp_definition` and returned both results in one MCP response. |
-| 7 | FSEvents sync | OK (wired) | `FileSyncManager` is constructed in `CalyxMCPServer.startLSP()` and threaded into `LSPService`. Test-side validation in `FileSyncManagerTests` and `LSPServiceFileSyncWiringTests` covers the dispatch path; manual edit-on-disk verification was not separately retested in this log. |
+| 7 | FSEvents sync | OK (wired) | `FileSyncManager` is constructed in `CalixMCPServer.startLSP()` and threaded into `LSPService`. Test-side validation in `FileSyncManagerTests` and `LSPServiceFileSyncWiringTests` covers the dispatch path; manual edit-on-disk verification was not separately retested in this log. |
 | 8 | Tool visibility | OK | `scripts/lsp-mcp-smoke-test.sh` confirms `tools/list` returns 77 (7 IPC + 70 LSP); `lsp_hover`, `lsp_session_status`, `lsp_check_installation`, `lsp_notebook_did_open`, `register_peer` all present. |
 | 9 | Idle shutdown | OK (wired) | `LSPService.config.idleTimeoutSeconds` default 1800. `LSPServiceTests.test_idleTimeout_triggersShutdown` validates the eviction path. Not retested live (would require 30-minute idle period). |
 | 10 | Crash recovery | OK (wired) | `LSPClientTests` covers transport EOF and the `LSPSession` rebuild path. Not retested live this round. |
@@ -33,6 +33,6 @@ Note on Swift LSP: sourcekit-lsp launched (`state.phase: running`)
 but failed `lsp_hover` against an Xcode-project file with `-32001
 No language service for ...`. This is a known sourcekit-lsp
 limitation against pure Xcode projects — it requires either a
-`Package.swift` workspace or `compile_commands.json`. Not a Calyx
+`Package.swift` workspace or `compile_commands.json`. Not a Calix
 bug; the production wiring is correct and the same flow works
 unchanged against rust-analyzer.

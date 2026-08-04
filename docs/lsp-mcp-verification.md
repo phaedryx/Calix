@@ -1,15 +1,15 @@
 # LSP MCP Proxy Verification
 
 End-to-end verification procedure for the LSP MCP proxy feature.
-Items 1-4 are automated via `swift test`; items 5-15 require Calyx
+Items 1-4 are automated via `swift test`; items 5-15 require Calix
 running with real language servers and are run manually.
 
 ## 1. Build
 
 ```
-cd ~/projects/Calyx-worktrees/lsp-mcp-proxy
+cd ~/projects/Calix-worktrees/lsp-mcp-proxy
 xcodegen generate
-xcodebuild -project Calyx.xcodeproj -scheme Calyx -configuration Debug -arch arm64 build
+xcodebuild -project Calix.xcodeproj -scheme Calix -configuration Debug -arch arm64 build
 ```
 
 Expected: `** BUILD SUCCEEDED **`, zero source-level warnings.
@@ -17,7 +17,7 @@ Expected: `** BUILD SUCCEEDED **`, zero source-level warnings.
 ## 2. Unit tests
 
 ```
-xcodebuild -project Calyx.xcodeproj -scheme Calyx -destination 'platform=macOS' test -only-testing:CalyxTests
+xcodebuild -project Calix.xcodeproj -scheme Calix -destination 'platform=macOS' test -only-testing:CalixTests
 ```
 
 Expected: all XCTest suites and all Swift Testing suites pass. The
@@ -45,7 +45,7 @@ LSP subsystem alone contributes the following test files:
   `MCPLSPBridgeFileOpsAndAITests`,
   `MCPLSPBridgeNotebookToolsTests`
 - `LSPSettingsTests`
-- `CalyxMCPServerLSPIntegrationTests` (cross-module)
+- `CalixMCPServerLSPIntegrationTests` (cross-module)
 
 ## 3. Registry coverage
 
@@ -67,8 +67,8 @@ dispatch to the correct LSP method with the correct params shape.
 
 Prerequisites:
 
-1. Launch Calyx (`/run` skill, or `open <DerivedData>/Calyx.app`).
-2. Inside Calyx: `Cmd+Shift+P` -> **Enable AI Agent IPC**. The MCP
+1. Launch Calix (`/run` skill, or `open <DerivedData>/Calix.app`).
+2. Inside Calix: `Cmd+Shift+P` -> **Enable AI Agent IPC**. The MCP
    server starts listening on TCP 41830 and writes the Bearer token
    to `~/.claude.json` (and to other agent configs if installed).
    Verify with `lsof -i :41830`.
@@ -81,7 +81,7 @@ Then run the smoke test script to verify the MCP plumbing:
 
 For each of TypeScript / Python / Swift / Rust / Go, ensure the
 matching language server is installed (or rely on `lsp_install` from
-item 11). Then from a Claude Code instance attached to `calyx-ipc`:
+item 11). Then from a Claude Code instance attached to `calix-ipc`:
 
 ```
 Run lsp_hover on src/index.ts at line 0 column 7
@@ -102,12 +102,12 @@ Hover popover.
 
 Open a file in the workspace via `lsp_session_warmup` + `lsp_hover`.
 Edit the file in a text editor and save. Run `lsp_hover` on the new
-content. Expected: hover reflects the edit (Calyx auto-sent
+content. Expected: hover reflects the edit (Calix auto-sent
 `textDocument/didChange` via FileSyncManager).
 
 ## 8. Tool visibility from Claude Code
 
-`/mcp` from Claude Code attached to `calyx-ipc`. Expected: 77 tools
+`/mcp` from Claude Code attached to `calix-ipc`. Expected: 77 tools
 listed (7 IPC + 70 LSP).
 
 ## 9. Idle shutdown
@@ -127,13 +127,13 @@ re-apply `didOpen` for files in the persisted snapshot.
 With Settings -> LSP Proxy -> Auto-install on, Confirm off, remove
 the language server binary from PATH (or use a workspace whose
 language is not installed yet). Call `lsp_hover` against a file of
-that language. Expected: Calyx runs the install command from the
+that language. Expected: Calix runs the install command from the
 registry, then dispatches the hover.
 
 ## 12. Chained prerequisite install
 
 Without `npm` on PATH, attempt `lsp_install language_id=typescript
-approve_prerequisites=true`. Expected: Calyx installs the
+approve_prerequisites=true`. Expected: Calix installs the
 prerequisite first (e.g. `brew install node`), then the language
 server.
 

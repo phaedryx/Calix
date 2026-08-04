@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Builds the calyx-session daemon/CLI binary.
+# Builds the calix-session daemon/CLI binary.
 #
 # Default (--host-only): host architecture only (arm64 macOS).
 # --all: additionally cross-compiles static Linux binaries for
@@ -10,7 +10,7 @@ set -euo pipefail
 # (no cargo-zigbuild dependency); rustup targets
 # {x86_64,aarch64}-unknown-linux-musl must be installed.
 #
-# calyx-session's `vt` crate links a Zig-built shim (`gvt`) against
+# calix-session's `vt` crate links a Zig-built shim (`gvt`) against
 # ghostty-vt sources, so it needs a Zig toolchain version compatible
 # with whatever the ghostty submodule currently pins. Resolution order:
 # an explicit GVT_ZIG override, then the versioned Homebrew Cellar path
@@ -23,7 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SESSION_DIR="$REPO_ROOT/calyx-session"
+SESSION_DIR="$REPO_ROOT/calix-session"
 OUT_DIR="$REPO_ROOT/build/session"
 
 MODE=host
@@ -66,7 +66,7 @@ if [ ! -x "$GVT_ZIG" ]; then
     exit 1
 fi
 
-echo "=== Building calyx-session (host-only, release) ==="
+echo "=== Building calix-session (host-only, release) ==="
 echo "GVT_ZIG=$GVT_ZIG"
 
 (
@@ -76,11 +76,11 @@ echo "GVT_ZIG=$GVT_ZIG"
 
 mkdir -p "$OUT_DIR"
 # rm before cp: same stale-code-signature-cache SIGKILL risk as the Bundle Session Daemon script in project.yml.
-rm -f "$OUT_DIR/calyx-session"
-cp "$SESSION_DIR/target/release/calyx-session" "$OUT_DIR/calyx-session"
-chmod 0755 "$OUT_DIR/calyx-session"
+rm -f "$OUT_DIR/calix-session"
+cp "$SESSION_DIR/target/release/calix-session" "$OUT_DIR/calix-session"
+chmod 0755 "$OUT_DIR/calix-session"
 
-echo "Built $OUT_DIR/calyx-session"
+echo "Built $OUT_DIR/calix-session"
 
 if [ "$MODE" != "all" ]; then
     exit 0
@@ -111,7 +111,7 @@ for entry in "${REMOTE_TARGETS[@]}"; do
         exit 1
     fi
 
-    echo "=== Building calyx-session ($rust_triple, release) ==="
+    echo "=== Building calix-session ($rust_triple, release) ==="
 
     # cargo's linker setting must be a single executable, so wrap the
     # pinned zig in a generated shim script that bakes in `cc -target`.
@@ -152,9 +152,9 @@ for entry in "${REMOTE_TARGETS[@]}"; do
 
     dest_dir="$OUT_DIR/session-remote/$arch_dir"
     mkdir -p "$dest_dir"
-    rm -f "$dest_dir/calyx-session"
-    cp "$SESSION_DIR/target/$rust_triple/release/calyx-session" "$dest_dir/calyx-session"
-    chmod 0755 "$dest_dir/calyx-session"
+    rm -f "$dest_dir/calix-session"
+    cp "$SESSION_DIR/target/$rust_triple/release/calix-session" "$dest_dir/calix-session"
+    chmod 0755 "$dest_dir/calix-session"
 
-    echo "Built $dest_dir/calyx-session"
+    echo "Built $dest_dir/calix-session"
 done

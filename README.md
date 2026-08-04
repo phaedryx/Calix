@@ -1,4 +1,4 @@
-# Calyx
+# Calix
 
 A macOS 26+ native terminal application built on [libghostty](https://github.com/ghostty-org/ghostty) with Liquid Glass UI.
 
@@ -10,7 +10,7 @@ A macOS 26+ native terminal application built on [libghostty](https://github.com
 
 https://github.com/user-attachments/assets/a04e1161-e296-4791-9b7c-3ef84d990089
 
-![Calyx Terminal](assets/screenshot.png)
+![Calix Terminal](assets/screenshot.png)
 
 ## Features
 
@@ -20,8 +20,8 @@ https://github.com/user-attachments/assets/a04e1161-e296-4791-9b7c-3ef84d990089
 - **Split Panes** -- horizontal and vertical splits with directional focus navigation
 - **Command Palette** -- search and execute all operations with `Cmd+Shift+P`
 - **Layout Restore** -- tabs, splits, and working directories auto-saved and restored on restart
-- **Persistent Sessions** -- opt-in daemon-backed sessions (`calyx-session`) that survive quit and crash; the toggle applies only to panes opened after it is enabled; reattach from the Session Browser (`Cmd+Shift+B`); a recovery bar offers the preserved session when auto-restore is skipped or fails; opt-in on-disk history
-- **Remote Sessions** -- persistent sessions on SSH hosts picked from `~/.ssh/config`; one-time daemon deploy via `calyx-session remote-install <host>`
+- **Persistent Sessions** -- opt-in daemon-backed sessions (`calix-session`) that survive quit and crash; the toggle applies only to panes opened after it is enabled; reattach from the Session Browser (`Cmd+Shift+B`); a recovery bar offers the preserved session when auto-restore is skipped or fails; opt-in on-disk history
+- **Remote Sessions** -- persistent sessions on SSH hosts picked from `~/.ssh/config`; one-time daemon deploy via `calix-session remote-install <host>`
 - **Agent Resume** -- reattached sessions can offer to resume the agent CLI conversation that was running (Settings -> Agents)
 - **Desktop Notifications** -- OSC 9/99/777 support with rate limiting
 - **Browser Integration** -- WKWebView tabs alongside terminal tabs (http/https only, non-persistent storage, popup blocking)
@@ -36,12 +36,12 @@ https://github.com/user-attachments/assets/a04e1161-e296-4791-9b7c-3ef84d990089
 - **AI Agent IPC** -- MCP server for communication between AI agent instances (Claude Code, Codex CLI, OpenCode, Hermes) across tabs and panes ([demo video](https://www.youtube.com/watch?v=Xty0ad9gGcM))
 - **Agents Sidebar** -- live status view for connected AI agents (Claude Code, Codex, OpenCode, Hermes) with per-agent state (blocked/working/idle/done), unread message badge, last-seen timestamp, and click-to-focus pane
 - **LSP Proxy MCP** -- exposes language server features such as hover, definition, references, rename, and diagnostics to AI agents over the same MCP server as AI Agent IPC. Missing servers can be auto-installed via Settings.
-- **Agent Cockpit** -- MCP tools that let agents drive Calyx: `pane_list`, `pane_split`, `tab_create` run immediately; `pane_run`, `pane_send_keys`, `palette_execute` require per-request approval via an in-window banner (opt-in auto-approve in Settings -> Agents)
+- **Agent Cockpit** -- MCP tools that let agents drive Calix: `pane_list`, `pane_split`, `tab_create` run immediately; `pane_run`, `pane_send_keys`, `palette_execute` require per-request approval via an in-window banner (opt-in auto-approve in Settings -> Agents)
 - **Approval Inbox** -- routes Claude Code / Codex tool-permission prompts into the same in-window approval banner across all panes: Allow / Deny per request, Always Allow scoped to one pane or all panes (session-only memory), safe fallback to the agent's own in-pane prompt on timeout; opt-in via Settings -> Agents
 - **Approval Queue Navigation** -- when multiple permission requests are pending, the banner shows prev/next chevrons and an "i / N" position label next to the action buttons; browse the queue and approve or deny any request out of order, and deciding one auto-advances to the nearest remaining request
 - **Command Log** -- records shell commands and their output (zsh/fish shell integration, auto-installed) and exposes `terminal_list_commands`, `terminal_read_output`, `terminal_await_command` MCP tools to agents; secrets (tokens, passwords, API keys) redacted before exposure; records stay in memory only
-- **Scriptable Browser** -- 25 CLI commands for browser automation (like cmux): snapshot, click, fill, eval, screenshot, wait, get-attribute, get-links, get-inputs, is-visible, hover, scroll. No enable step needed. `calyx` CLI bundled in the app
-- **Ghostty config compatibility** -- reads `~/.config/ghostty/config` (most keys hot-reload on save; see Settings for Calyx-managed keys)
+- **Scriptable Browser** -- 25 CLI commands for browser automation (like cmux): snapshot, click, fill, eval, screenshot, wait, get-attribute, get-links, get-inputs, is-visible, hover, scroll. No enable step needed. `calix` CLI bundled in the app
+- **Ghostty config compatibility** -- reads `~/.config/ghostty/config` (most keys hot-reload on save; see Settings for Calix-managed keys)
 - **Compose Overlay** -- floating text editor over the terminal for comfortable multiline input (`Cmd+Shift+E`), useful for writing long commands or AI prompts ([demo video](https://www.youtube.com/watch?v=qhwYnk8adF4))
 - **Quick Terminal** -- system-wide drop-down terminal toggled via global keybind
 - **Clipboard Confirmation** -- prompts before pasting potentially unsafe content (respects Ghostty's `clipboard-paste-protection` setting)
@@ -110,7 +110,7 @@ https://github.com/user-attachments/assets/a04e1161-e296-4791-9b7c-3ef84d990089
 
 ## IPC (Inter-Pane Communication)
 
-AI agent instances (Claude Code, Codex CLI, OpenCode, Hermes) running in different Calyx tabs or panes can communicate with each other via a built-in MCP server.
+AI agent instances (Claude Code, Codex CLI, OpenCode, Hermes) running in different Calix tabs or panes can communicate with each other via a built-in MCP server.
 
 1. Open the command palette (`Cmd+Shift+P`) and run **Enable AI Agent IPC**
 2. Start agents (Claude Code, Codex, OpenCode, or Hermes) in two or more terminal panes
@@ -120,51 +120,51 @@ Config is auto-written to `~/.claude.json`, `~/.codex/config.toml`, `~/.config/o
 
 Available MCP tools: `register_peer`, `list_peers`, `send_message`, `broadcast`, `receive_messages`, `get_peer_status`. `receive_messages` deletes each message from the inbox as it returns it, so a message is only ever delivered once.
 
-The same server exposes cockpit tools that control Calyx (`pane_list`, `pane_split`, `tab_create`; approval-gated: `pane_run`, `pane_send_keys`, `palette_execute`) and command-log tools (`terminal_list_commands`, `terminal_read_output`, `terminal_await_command`; requires the zsh/fish shell integration, installed automatically while Settings -> Agents -> **Track shell commands** is on). Command text and output are redacted for known secret patterns (tokens, passwords, API keys, JWTs) before agents can read them; output still being redacted reports `{"output_pending": true}` from `terminal_read_output` until it finishes.
+The same server exposes cockpit tools that control Calix (`pane_list`, `pane_split`, `tab_create`; approval-gated: `pane_run`, `pane_send_keys`, `palette_execute`) and command-log tools (`terminal_list_commands`, `terminal_read_output`, `terminal_await_command`; requires the zsh/fish shell integration, installed automatically while Settings -> Agents -> **Track shell commands** is on). Command text and output are redacted for known secret patterns (tokens, passwords, API keys, JWTs) before agents can read them; output still being redacted reports `{"output_pending": true}` from `terminal_read_output` until it finishes.
 
 To disable, open the command palette and run **Disable AI Agent IPC**.
 
 ## LSP Proxy MCP
 
-Calyx can expose language server features to CLI AI agents through the same MCP server used by AI Agent IPC. Agents can call tools such as `lsp_hover`, `lsp_definition`, `lsp_references`, `lsp_rename`, and `lsp_diagnostics` to get symbol-aware results from TypeScript, Python, Rust, Go, Swift, and other language servers instead of relying on grep.
+Calix can expose language server features to CLI AI agents through the same MCP server used by AI Agent IPC. Agents can call tools such as `lsp_hover`, `lsp_definition`, `lsp_references`, `lsp_rename`, and `lsp_diagnostics` to get symbol-aware results from TypeScript, Python, Rust, Go, Swift, and other language servers instead of relying on grep.
 
 ### Setup
 
 1. Open the command palette (`Cmd+Shift+P`) and run **Enable AI Agent IPC**.
-2. Restart or reconnect your AI agent so it picks up the `calyx-ipc` MCP server.
+2. Restart or reconnect your AI agent so it picks up the `calix-ipc` MCP server.
 3. Optional: open Settings -> **LSP** and enable auto-install for missing language servers.
 
-Calyx keeps language servers running in the background, syncs file changes from disk, and starts the right server on the first `lsp_*` call for a workspace.
+Calix keeps language servers running in the background, syncs file changes from disk, and starts the right server on the first `lsp_*` call for a workspace.
 
 ## Browser Scripting
 
 Agents can programmatically control browser tabs via 25 CLI commands, similar to cmux's browser automation.
 
 1. Open a browser tab and navigate to a page
-2. Use `calyx browser` commands from any terminal tab — no enable step needed
+2. Use `calix browser` commands from any terminal tab — no enable step needed
 
 ### CLI Commands
 
 ```bash
-calyx browser list                         # List all browser tabs
-calyx browser snapshot --tab-id <id>       # Accessibility tree with element refs
-calyx browser get-text h1 --tab-id <id>    # Get element text
-calyx browser click a --tab-id <id>        # Click element
-calyx browser fill input --value "text"    # Fill input field
-calyx browser eval 'document.title'        # Execute JavaScript
-calyx browser screenshot                   # Capture to temp file
-calyx browser wait --selector ".loaded"    # Wait for condition
-calyx browser get-attribute a href         # Get element attribute
-calyx browser get-links                    # List all links (JSON)
-calyx browser get-inputs                   # List all form inputs (JSON)
-calyx browser is-visible '#sidebar'        # Check element visibility
-calyx browser hover '#menu-item'           # Hover over element
-calyx browser scroll down --amount 500     # Scroll page/element
+calix browser list                         # List all browser tabs
+calix browser snapshot --tab-id <id>       # Accessibility tree with element refs
+calix browser get-text h1 --tab-id <id>    # Get element text
+calix browser click a --tab-id <id>        # Click element
+calix browser fill input --value "text"    # Fill input field
+calix browser eval 'document.title'        # Execute JavaScript
+calix browser screenshot                   # Capture to temp file
+calix browser wait --selector ".loaded"    # Wait for condition
+calix browser get-attribute a href         # Get element attribute
+calix browser get-links                    # List all links (JSON)
+calix browser get-inputs                   # List all form inputs (JSON)
+calix browser is-visible '#sidebar'        # Check element visibility
+calix browser hover '#menu-item'           # Hover over element
+calix browser scroll down --amount 500     # Scroll page/element
 ```
 
-The `calyx` CLI binary is bundled inside `Calyx.app/Contents/Resources/bin/`. To install it to your PATH, run **Install CLI to PATH** from the command palette.
+The `calix` CLI binary is bundled inside `Calix.app/Contents/Resources/bin/`. To install it to your PATH, run **Install CLI to PATH** from the command palette.
 
-The browser server starts automatically with the app and listens on `localhost:41840`. Connection info is written to `~/.config/calyx/browser.json`.
+The browser server starts automatically with the app and listens on `localhost:41840`. Connection info is written to `~/.config/calix/browser.json`.
 
 ## Installation
 
@@ -177,9 +177,9 @@ brew install --cask calyx
 
 ### Manual
 
-1. Download `Calyx.zip` from the [latest release](https://github.com/yuuichieguchi/Calyx/releases/latest)
+1. Download `Calix.zip` from the [latest release](https://github.com/yuuichieguchi/Calyx/releases/latest)
 2. Unzip the file
-3. Drag `Calyx.app` into `/Applications`
+3. Drag `Calix.app` into `/Applications`
 
 Direct downloads include automatic update checking via Sparkle. Homebrew installs are updated via `brew upgrade`.
 
@@ -209,12 +209,12 @@ cp -R ghostty/macos/GhosttyKit.xcframework .
 
 # Generate Xcode project & build
 xcodegen generate
-xcodebuild -project Calyx.xcodeproj -scheme Calyx -configuration Debug build
+xcodebuild -project Calix.xcodeproj -scheme Calix -configuration Debug build
 ```
 
 ## Architecture
 
-Calyx uses AppKit for window, tab, and focus management with SwiftUI for view rendering, bridged via `NSHostingView`.
+Calix uses AppKit for window, tab, and focus management with SwiftUI for view rendering, bridged via `NSHostingView`.
 
 - All ghostty C API calls go through the `GhosttyFFI` enum
 - `@MainActor` enforced on all UI and model code
@@ -225,7 +225,7 @@ Calyx uses AppKit for window, tab, and focus management with SwiftUI for view re
 ## Known Limitations
 
 - **Cursor click-to-move on full-width text** -- cursor placement may be offset on Japanese/full-width text lines because Ghostty's cursor-click-to-move internally translates clicks into arrow-key steps over terminal cells.
-- **Calyx-managed config keys** -- `background-opacity`, `background-blur`, `background-opacity-cells`, `font-codepoint-map`, `foreground` are overridden by Calyx for Glass UI. See Settings > Ghostty Config Compatibility for the full list.
+- **Calix-managed config keys** -- `background-opacity`, `background-blur`, `background-opacity-cells`, `font-codepoint-map`, `foreground` are overridden by Calix for Glass UI. See Settings > Ghostty Config Compatibility for the full list.
 
 ## License
 
