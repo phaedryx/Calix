@@ -210,6 +210,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
+        // One-time Calyx -> Calix preferences migration. Must run before
+        // the first UserDefaults.standard-backed read below (inside
+        // applyCalixShellIntegrationIfEnabled(), which reads
+        // CommandTrackingSettings.trackingEnabled) -- otherwise that read
+        // would silently see defaults instead of the user's existing
+        // settings from the old com.calyx.terminal bundle ID.
+        PreferencesMigrator.migrateIfNeeded()
+
         // Wire the real Ghostty-FFI-backed output reader now that we're
         // definitely not in the unit-test host (a GhosttyCommandOutputReader
         // read touches live ghostty FFI, unsafe there).
