@@ -297,8 +297,8 @@ final class CommandLogStore {
 
     /// Runs `SecretRedactor.redact` + `truncatedOutput` off the MainActor
     /// via `Task.detached` -- matching `AppDelegate`'s own precedent for
-    /// escaping MainActor inheritance (see that file's `SyncBridgeBox` doc
-    /// comment): a plain, non-detached `Task { }` created from this
+    /// escaping MainActor inheritance (see `SessionRestoreCoordinator.swift`'s
+    /// `SyncBridgeBox` doc comment): a plain, non-detached `Task { }` created from this
     /// MainActor-isolated method would simply queue onto MainActor's own
     /// turn rather than actually moving the CPU work off it. `rawText`/
     /// `totalRows` are captured by value (both `Sendable`), and `self` only
