@@ -128,7 +128,18 @@ final class AppDelegateEmptyPreservedSnapshotTests: XCTestCase {
     }
 
     private func makeNonEmptySnapshot(windowID: UUID = UUID()) -> SessionSnapshot {
-        SessionSnapshot(windows: [WindowSnapshot(id: windowID, frame: CGRect(x: 0, y: 0, width: 800, height: 600))])
+        // Must include at least one tab group with at least one tab:
+        // removingEmptyWindows() (see initializeHasPreservedSessionSnapshotFlag())
+        // drops any window whose groups are all empty, so a groups-less
+        // WindowSnapshot does not actually exercise the "non-empty" case
+        // this fixture is named for.
+        SessionSnapshot(windows: [
+            WindowSnapshot(
+                id: windowID,
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                groups: [TabGroupSnapshot(tabs: [TabSnapshot()])]
+            )
+        ])
     }
 
     // MARK: - (a) initializeHasPreservedSessionSnapshotFlag()

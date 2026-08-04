@@ -55,6 +55,23 @@ private final class FakeDaemonClient: SessionDaemonClientProtocol, @unchecked Se
 @MainActor
 final class SessionBrowserModelRemoteHostTests: XCTestCase {
 
+    // refreshRemoteHostCandidates() gates on SessionSettings.persistentSessionsEnabled
+    // (see SessionBrowserModelRemoteHostsGateTests, added after this file) --
+    // isolate via a private suite and turn the flag on, since this file's own
+    // job is exercising the populate-from-provider behavior, not the gate.
+    private let settingsSuiteName = "com.calix.tests.SessionBrowserModelRemoteHostTests"
+
+    override func setUp() {
+        super.setUp()
+        SessionSettings._testUseSuite(named: settingsSuiteName)
+        SessionSettings.persistentSessionsEnabled = true
+    }
+
+    override func tearDown() {
+        SessionSettings._testTeardownSuite(named: settingsSuiteName)
+        super.tearDown()
+    }
+
     private func makeProvider(configText: String?) -> SSHHostCandidateProvider {
         SSHHostCandidateProvider(
             rootResolver: FakeRootResolver(root: "/opt/calix-fixture/custom-home"),

@@ -305,6 +305,34 @@ final class CalixMCPServerLoopbackBugSpecTests: XCTestCase {
         let allReady = await waitUntil(timeout: 2.0) {
             self.preBoundListeners.allSatisfy { $0.state == .ready }
         }
+        if !allReady {
+            // NWListener(using:) construction above always "succeeds" --
+            // the real bind happens asynchronously after start(), so a
+            // genuine EADDRINUSE (e.g. a real, already-running Calyx.app
+            // instance legitimately holding 41830-41839 on this host, the
+            // same known hazard CalixMCPServerTests.swift already
+            // documents and steers around) only surfaces here, as a
+            // `.failed` state rather than merely "not yet ready". That is
+            // an environmental precondition failure, not a defect in the
+            // fallback logic under test -- skip rather than fail so this
+            // suite doesn't flake against a legitimately running app.
+            let squatted = preBoundListeners.contains { listener in
+                if case .failed = listener.state { return true }
+                return false
+            }
+            if squatted {
+                throw XCTSkip(
+                    """
+                    Another process already holds one or more of \
+                    127.0.0.1:\(canonicalScanBase)-\(canonicalScanBase + canonicalScanCount - 1) \
+                    on this host (most likely a real, already-running Calyx instance using \
+                    the same production default port range), so this test's own precondition \
+                    -- exhausting the canonical scan itself -- cannot be established here. \
+                    Quit other Calyx instances and re-run to actually exercise the fallback.
+                    """
+                )
+            }
+        }
         XCTAssertTrue(
             allReady,
             "Pre-bound listeners failed to reach .ready within 2s — test cannot reliably exhaust the canonical scan."
