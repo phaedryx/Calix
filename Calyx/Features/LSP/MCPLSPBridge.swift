@@ -2156,22 +2156,19 @@ enum CallHierarchyPrepareTool: SimpleLSPTool {
 
 // MARK: - CallHierarchyIncomingTool
 
-enum CallHierarchyIncomingTool: MCPLSPTool {
+enum CallHierarchyIncomingTool: SimpleLSPTool {
     static let name = "lsp_call_hierarchy_incoming"
     static let description = "Get incoming calls for a CallHierarchyItem returned by lsp_call_hierarchy_prepare."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemDescription: "CallHierarchyItem returned by lsp_call_hierarchy_prepare"
     )
+    static let method = "callHierarchy/incomingCalls"
+    typealias Result = [CallHierarchyIncomingCall]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CallHierarchyIncomingCallsParams) {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
@@ -2180,38 +2177,25 @@ enum CallHierarchyIncomingTool: MCPLSPTool {
             as: CallHierarchyItem.self,
             argumentName: "item"
         )
-        let params = CallHierarchyIncomingCallsParams(item: item)
-        do {
-            let result: [CallHierarchyIncomingCall]? = try await session.sendRequest(
-                method: "callHierarchy/incomingCalls",
-                params: params,
-                resultType: [CallHierarchyIncomingCall]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, CallHierarchyIncomingCallsParams(item: item))
     }
 }
 
 // MARK: - CallHierarchyOutgoingTool
 
-enum CallHierarchyOutgoingTool: MCPLSPTool {
+enum CallHierarchyOutgoingTool: SimpleLSPTool {
     static let name = "lsp_call_hierarchy_outgoing"
     static let description = "Get outgoing calls for a CallHierarchyItem returned by lsp_call_hierarchy_prepare."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemDescription: "CallHierarchyItem returned by lsp_call_hierarchy_prepare"
     )
+    static let method = "callHierarchy/outgoingCalls"
+    typealias Result = [CallHierarchyOutgoingCall]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CallHierarchyOutgoingCallsParams) {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
@@ -2220,17 +2204,7 @@ enum CallHierarchyOutgoingTool: MCPLSPTool {
             as: CallHierarchyItem.self,
             argumentName: "item"
         )
-        let params = CallHierarchyOutgoingCallsParams(item: item)
-        do {
-            let result: [CallHierarchyOutgoingCall]? = try await session.sendRequest(
-                method: "callHierarchy/outgoingCalls",
-                params: params,
-                resultType: [CallHierarchyOutgoingCall]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, CallHierarchyOutgoingCallsParams(item: item))
     }
 }
 
@@ -2254,22 +2228,19 @@ enum TypeHierarchyPrepareTool: SimpleLSPTool {
 
 // MARK: - TypeHierarchySupertypesTool
 
-enum TypeHierarchySupertypesTool: MCPLSPTool {
+enum TypeHierarchySupertypesTool: SimpleLSPTool {
     static let name = "lsp_type_hierarchy_supertypes"
     static let description = "Get supertypes for a TypeHierarchyItem returned by lsp_type_hierarchy_prepare."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemDescription: "TypeHierarchyItem returned by lsp_type_hierarchy_prepare"
     )
+    static let method = "typeHierarchy/supertypes"
+    typealias Result = [TypeHierarchyItem]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: TypeHierarchySupertypesParams) {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
@@ -2278,38 +2249,25 @@ enum TypeHierarchySupertypesTool: MCPLSPTool {
             as: TypeHierarchyItem.self,
             argumentName: "item"
         )
-        let params = TypeHierarchySupertypesParams(item: item)
-        do {
-            let result: [TypeHierarchyItem]? = try await session.sendRequest(
-                method: "typeHierarchy/supertypes",
-                params: params,
-                resultType: [TypeHierarchyItem]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, TypeHierarchySupertypesParams(item: item))
     }
 }
 
 // MARK: - TypeHierarchySubtypesTool
 
-enum TypeHierarchySubtypesTool: MCPLSPTool {
+enum TypeHierarchySubtypesTool: SimpleLSPTool {
     static let name = "lsp_type_hierarchy_subtypes"
     static let description = "Get subtypes for a TypeHierarchyItem returned by lsp_type_hierarchy_prepare."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemDescription: "TypeHierarchyItem returned by lsp_type_hierarchy_prepare"
     )
+    static let method = "typeHierarchy/subtypes"
+    typealias Result = [TypeHierarchyItem]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: TypeHierarchySubtypesParams) {
         guard let itemAny = arguments["item"] else {
             throw MCPLSPBridgeError.missingArgument("item")
         }
@@ -2318,17 +2276,7 @@ enum TypeHierarchySubtypesTool: MCPLSPTool {
             as: TypeHierarchyItem.self,
             argumentName: "item"
         )
-        let params = TypeHierarchySubtypesParams(item: item)
-        do {
-            let result: [TypeHierarchyItem]? = try await session.sendRequest(
-                method: "typeHierarchy/subtypes",
-                params: params,
-                resultType: [TypeHierarchyItem]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, TypeHierarchySubtypesParams(item: item))
     }
 }
 
@@ -2370,23 +2318,20 @@ enum CodeLensTool: SimpleLSPTool {
 
 // MARK: - CodeLensResolveTool
 
-enum CodeLensResolveTool: MCPLSPTool {
+enum CodeLensResolveTool: SimpleLSPTool {
     static let name = "lsp_code_lens_resolve"
     static let description = "Resolve the command / data of a code lens entry returned by lsp_code_lens."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "code_lens",
         itemDescription: "CodeLens object returned by lsp_code_lens. Forwarded verbatim to codeLens/resolve."
     )
+    static let method = "codeLens/resolve"
+    typealias Result = CodeLens?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CodeLens) {
         guard let codeLensAny = arguments["code_lens"] else {
             throw MCPLSPBridgeError.missingArgument("code_lens")
         }
@@ -2395,16 +2340,7 @@ enum CodeLensResolveTool: MCPLSPTool {
             as: CodeLens.self,
             argumentName: "code_lens"
         )
-        do {
-            let result: CodeLens? = try await session.sendRequest(
-                method: "codeLens/resolve",
-                params: codeLens,
-                resultType: CodeLens?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, codeLens)
     }
 }
 
@@ -2428,23 +2364,20 @@ enum InlayHintTool: SimpleLSPTool {
 
 // MARK: - InlayHintResolveTool
 
-enum InlayHintResolveTool: MCPLSPTool {
+enum InlayHintResolveTool: SimpleLSPTool {
     static let name = "lsp_inlay_hint_resolve"
     static let description = "Resolve the tooltip / text edits / label parts of an InlayHint returned by lsp_inlay_hint."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "inlay_hint",
         itemDescription: "InlayHint object returned by lsp_inlay_hint. Forwarded verbatim to inlayHint/resolve."
     )
+    static let method = "inlayHint/resolve"
+    typealias Result = InlayHint?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: InlayHint) {
         guard let hintAny = arguments["inlay_hint"] else {
             throw MCPLSPBridgeError.missingArgument("inlay_hint")
         }
@@ -2453,16 +2386,7 @@ enum InlayHintResolveTool: MCPLSPTool {
             as: InlayHint.self,
             argumentName: "inlay_hint"
         )
-        do {
-            let result: InlayHint? = try await session.sendRequest(
-                method: "inlayHint/resolve",
-                params: hint,
-                resultType: InlayHint?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, hint)
     }
 }
 
@@ -2790,23 +2714,20 @@ enum DocumentLinkTool: SimpleLSPTool {
 
 // MARK: - DocumentLinkResolveTool
 
-enum DocumentLinkResolveTool: MCPLSPTool {
+enum DocumentLinkResolveTool: SimpleLSPTool {
     static let name = "lsp_document_link_resolve"
     static let description = "Resolve the target / data of a DocumentLink returned by lsp_document_link."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "document_link",
         itemDescription: "DocumentLink object returned by lsp_document_link. Forwarded verbatim to documentLink/resolve."
     )
+    static let method = "documentLink/resolve"
+    typealias Result = DocumentLink?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DocumentLink) {
         guard let linkAny = arguments["document_link"] else {
             throw MCPLSPBridgeError.missingArgument("document_link")
         }
@@ -2815,16 +2736,7 @@ enum DocumentLinkResolveTool: MCPLSPTool {
             as: DocumentLink.self,
             argumentName: "document_link"
         )
-        do {
-            let result: DocumentLink? = try await session.sendRequest(
-                method: "documentLink/resolve",
-                params: link,
-                resultType: DocumentLink?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, link)
     }
 }
 
@@ -2889,23 +2801,20 @@ enum ColorPresentationTool: SimpleLSPTool {
 
 // MARK: - CompletionResolveTool
 
-enum CompletionResolveTool: MCPLSPTool {
+enum CompletionResolveTool: SimpleLSPTool {
     static let name = "lsp_completion_resolve"
     static let description = "Resolve additional details (documentation, detail, additionalTextEdits) for a CompletionItem returned by lsp_completion (completionItem/resolve)."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "completion_item",
         itemDescription: "CompletionItem returned by lsp_completion. Forwarded verbatim to completionItem/resolve."
     )
+    static let method = "completionItem/resolve"
+    typealias Result = CompletionItem
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CompletionItem) {
         guard let itemAny = arguments["completion_item"] else {
             throw MCPLSPBridgeError.missingArgument("completion_item")
         }
@@ -2914,38 +2823,26 @@ enum CompletionResolveTool: MCPLSPTool {
             as: CompletionItem.self,
             argumentName: "completion_item"
         )
-        do {
-            let result: CompletionItem = try await session.sendRequest(
-                method: "completionItem/resolve",
-                params: item,
-                resultType: CompletionItem.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, item)
     }
 }
 
 // MARK: - CodeActionResolveTool
 
-enum CodeActionResolveTool: MCPLSPTool {
+enum CodeActionResolveTool: SimpleLSPTool {
     static let name = "lsp_code_action_resolve"
     static let description = "Resolve the edit / command of a CodeAction returned by lsp_code_action (codeAction/resolve)."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "code_action",
         itemDescription: "CodeAction returned by lsp_code_action. Forwarded verbatim to codeAction/resolve."
     )
+    static let method = "codeAction/resolve"
+    typealias Result = CodeAction
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: CodeAction) {
         guard let actionAny = arguments["code_action"] else {
             throw MCPLSPBridgeError.missingArgument("code_action")
         }
@@ -2954,16 +2851,7 @@ enum CodeActionResolveTool: MCPLSPTool {
             as: CodeAction.self,
             argumentName: "code_action"
         )
-        do {
-            let result: CodeAction = try await session.sendRequest(
-                method: "codeAction/resolve",
-                params: action,
-                resultType: CodeAction.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, action)
     }
 }
 
@@ -3090,23 +2978,20 @@ enum OnTypeFormattingTool: MCPLSPTool {
 
 // MARK: - WorkspaceSymbolResolveTool
 
-enum WorkspaceSymbolResolveTool: MCPLSPTool {
+enum WorkspaceSymbolResolveTool: SimpleLSPTool {
     static let name = "lsp_workspace_symbol_resolve"
     static let description = "Resolve the full location of a WorkspaceSymbol returned by lsp_workspace_symbol (workspaceSymbol/resolve)."
     static let inputSchema: [String: AnyCodable] = itemBasedSchema(
         itemKey: "workspace_symbol",
         itemDescription: "WorkspaceSymbol returned by lsp_workspace_symbol. Forwarded verbatim to workspaceSymbol/resolve."
     )
+    static let method = "workspaceSymbol/resolve"
+    typealias Result = WorkspaceSymbol
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: WorkspaceSymbol) {
         guard let symbolAny = arguments["workspace_symbol"] else {
             throw MCPLSPBridgeError.missingArgument("workspace_symbol")
         }
@@ -3115,16 +3000,7 @@ enum WorkspaceSymbolResolveTool: MCPLSPTool {
             as: WorkspaceSymbol.self,
             argumentName: "workspace_symbol"
         )
-        do {
-            let result: WorkspaceSymbol = try await session.sendRequest(
-                method: "workspaceSymbol/resolve",
-                params: symbol,
-                resultType: WorkspaceSymbol.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (nil, symbol)
     }
 }
 
