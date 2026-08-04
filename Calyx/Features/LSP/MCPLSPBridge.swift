@@ -1399,141 +1399,73 @@ private func extractFormattingOptions(
 
 // MARK: - HoverTool
 
-enum HoverTool: MCPLSPTool {
+enum HoverTool: SimpleLSPTool {
     static let name = "lsp_hover"
     static let description = "Get hover information (type signature, docs) at a position in a file."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/hover"
+    typealias Result = Hover?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: HoverParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = HoverParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: Hover? = try await session.sendRequest(
-                method: "textDocument/hover",
-                params: params,
-                resultType: Hover?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, HoverParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
 // MARK: - DefinitionTool
 
-enum DefinitionTool: MCPLSPTool {
+enum DefinitionTool: SimpleLSPTool {
     static let name = "lsp_definition"
     static let description = "Go to the definition(s) of the symbol at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/definition"
+    typealias Result = DefinitionResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DefinitionParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DefinitionParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: DefinitionResult? = try await session.sendRequest(
-                method: "textDocument/definition",
-                params: params,
-                resultType: DefinitionResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DefinitionParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
 // MARK: - DeclarationTool
 
-enum DeclarationTool: MCPLSPTool {
+enum DeclarationTool: SimpleLSPTool {
     static let name = "lsp_declaration"
     static let description = "Go to the declaration(s) of the symbol at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/declaration"
+    typealias Result = DeclarationResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: DeclarationParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = DeclarationParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: DeclarationResult? = try await session.sendRequest(
-                method: "textDocument/declaration",
-                params: params,
-                resultType: DeclarationResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, DeclarationParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
 // MARK: - TypeDefinitionTool
 
-enum TypeDefinitionTool: MCPLSPTool {
+enum TypeDefinitionTool: SimpleLSPTool {
     static let name = "lsp_type_definition"
     static let description = "Go to the type definition(s) of the symbol at a position."
     static let inputSchema: [String: AnyCodable] = positionRequestSchema()
+    static let method = "textDocument/typeDefinition"
+    typealias Result = TypeDefinitionResult?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: TypeDefinitionParams) {
         let (uri, position) = try bridge.extractPosition(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
-        let params = TypeDefinitionParams(
-            textDocument: TextDocumentIdentifier(uri: uri),
-            position: position
-        )
-        do {
-            let result: TypeDefinitionResult? = try await session.sendRequest(
-                method: "textDocument/typeDefinition",
-                params: params,
-                resultType: TypeDefinitionResult?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, TypeDefinitionParams(textDocument: TextDocumentIdentifier(uri: uri), position: position))
     }
 }
 
