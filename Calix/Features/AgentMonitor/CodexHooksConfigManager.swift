@@ -53,6 +53,19 @@ struct CodexHooksConfigManager: Sendable {
     static let beginLine = "# BEGIN CALIX AGENT HOOKS (managed by Calix, do not edit)"
     static let endLine = "# END CALIX AGENT HOOKS"
 
+    /// Pre-rename markers/filenames -- recognized alongside the current
+    /// ones so a config.toml written by a pre-rename Calyx install is
+    /// still recognized as "hooks installed" and its managed block is
+    /// replaced (not duplicated) on reinstall. The block-writing logic
+    /// itself always emits the CURRENT `beginLine`/`endLine`; only
+    /// recognition is dual.
+    private static let legacyBeginLine = "# BEGIN CALYX AGENT HOOKS (managed by Calyx, do not edit)"
+    private static let legacyEndLine = "# END CALYX AGENT HOOKS"
+    private static let recognizedBeginLines: Set<String> = [beginLine, legacyBeginLine]
+    private static let recognizedEndLines: Set<String> = [endLine, legacyEndLine]
+    private static let recognizedScriptFileNames: Set<String> =
+        Set([AgentHookScript.fileName, ApprovalHookScript.fileName, "calyx-agent-hook", "calyx-approval-hook"])
+
     // MARK: - Public API
 
     /// Replaces Calix's managed block in `configPath` with a freshly built
@@ -140,7 +153,7 @@ struct CodexHooksConfigManager: Sendable {
             return false
         }
         let normalized = content.replacingOccurrences(of: "\r\n", with: "\n")
-        return normalized.components(separatedBy: "\n").contains(beginLine)
+        return normalized.components(separatedBy: "\n").contains { recognizedBeginLines.contains($0) }
     }
 
     // MARK: - Private: Managed Block Construction
@@ -202,12 +215,12 @@ struct CodexHooksConfigManager: Sendable {
     private static func removingManagedBlock(from content: String) -> (result: String, hadBlock: Bool) {
         var lines = content.components(separatedBy: "\n")
 
-        guard let beginIndex = lines.firstIndex(of: beginLine) else {
+        guard let beginIndex = lines.firstIndex(where: { recognizedBeginLines.contains($0) }) else {
             return (content, false)
         }
 
         let removeEnd: Int
-        if let endIndex = lines[(beginIndex + 1)...].firstIndex(of: endLine) {
+        if let endIndex = lines[(beginIndex + 1)...].firstIndex(where: { recognizedEndLines.contains($0) }) {
             removeEnd = endIndex
         } else {
             var lastRecognized = beginIndex
@@ -230,11 +243,10 @@ struct CodexHooksConfigManager: Sendable {
     /// Whether `line` looks like part of Calix's own generated managed-block
     /// body, for the orphan-BEGIN self-heal in `removingManagedBlock`: a
     /// blank line, a `#` comment, a `[[hooks.*]]` array-of-tables header, or
-    /// a `type` / `command` (only when its value references
-    /// `AgentHookScript.fileName` or `ApprovalHookScript.fileName`, i.e.
-    /// it's plausibly one of Calix's own command entries, not unrelated
-    /// user TOML that happens to have a `command` key) / `timeout` key
-    /// line.
+    /// a `type` / `command` (only when its value references one of
+    /// `recognizedScriptFileNames` -- current or pre-rename -- i.e. it's
+    /// plausibly one of Calix's own command entries, not unrelated user
+    /// TOML that happens to have a `command` key) / `timeout` key line.
     private static func isCalixGeneratedBlockLine(_ line: String) -> Bool {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty { return true }
@@ -247,7 +259,7 @@ struct CodexHooksConfigManager: Sendable {
             return true
         }
         if trimmed.hasPrefix("command"),
-           trimmed.contains(AgentHookScript.fileName) || trimmed.contains(ApprovalHookScript.fileName) {
+           recognizedScriptFileNames.contains(where: trimmed.contains) {
             return true
         }
         return false

@@ -218,6 +218,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // settings from the old com.calyx.terminal bundle ID.
         PreferencesMigrator.migrateIfNeeded()
 
+        // One-time Calyx -> Calix Application Support directory migration.
+        // Must run before applyGhosttyResourcesDirEnvironmentIfNeeded()/
+        // applyCalixShellIntegrationIfEnabled() below, both of which
+        // eventually touch paths under AppSupportDirectory.path.
+        AppSupportDirectory.migrateLegacyDirectoryIfNeeded()
+
         // Wire the real Ghostty-FFI-backed output reader now that we're
         // definitely not in the unit-test host (a GhosttyCommandOutputReader
         // read touches live ghostty FFI, unsafe there).

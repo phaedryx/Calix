@@ -17,6 +17,12 @@ enum OpenCodePluginManager: Sendable {
 
     static let fileName = "calix-agent-monitor.js"
 
+    /// Pre-rename plugin filename. Cleaned up (deleted, best-effort) from
+    /// the same `plugins/` directory on both install and remove, so
+    /// neither a fresh install nor a full disable leaves a stale,
+    /// no-longer-loaded copy behind alongside the current-named file.
+    private static let legacyFileNames: Set<String> = ["calyx-agent-monitor.js"]
+
     /// OpenCode plugin API: `export default async ({ directory }) => ({
     /// event: async ({ event }) => {...} })`. Forwards OpenCode's plugin
     /// events to Calix's local Agent Monitor IPC endpoint, normalized to
@@ -184,6 +190,7 @@ enum OpenCodePluginManager: Sendable {
 
         let resolvedScriptPath = try ConfigFileUtils.resolveConfigPath(scriptPath)
         try scriptBody.write(toFile: resolvedScriptPath, atomically: true, encoding: .utf8)
+        removeLegacyPluginFiles(inDirectory: pluginsDir)
         return scriptPath
     }
 
@@ -197,9 +204,12 @@ enum OpenCodePluginManager: Sendable {
     /// real installed file behind un-removed.
     static func remove(pluginsDirectory: String? = nil) throws {
         let path = pluginPath(pluginsDirectory: pluginsDirectory)
+        let pluginsDir = (path as NSString).deletingLastPathComponent
         let resolvedPath = try ConfigFileUtils.resolveConfigPath(path)
-        guard FileManager.default.fileExists(atPath: resolvedPath) else { return }
-        try FileManager.default.removeItem(atPath: resolvedPath)
+        if FileManager.default.fileExists(atPath: resolvedPath) {
+            try FileManager.default.removeItem(atPath: resolvedPath)
+        }
+        removeLegacyPluginFiles(inDirectory: pluginsDir)
     }
 
     static func isInstalled(pluginsDirectory: String? = nil) -> Bool {
@@ -207,6 +217,21 @@ enum OpenCodePluginManager: Sendable {
     }
 
     // MARK: - Private
+
+    /// Best-effort deletes any pre-rename-named plugin file(s) found
+    /// directly in `pluginsDir` (`<pluginsDirectory>/plugins`), following
+    /// a symlinked destination the same way `install`/`remove` do. Failures
+    /// (file absent, permissions, etc.) are silently ignored via `try?` --
+    /// this is cleanup of a stale artifact, not a correctness-critical
+    /// operation, and must never cause install/remove to fail because a
+    /// leftover legacy file couldn't be deleted.
+    private static func removeLegacyPluginFiles(inDirectory pluginsDir: String) {
+        for legacyName in legacyFileNames {
+            let legacyPath = (pluginsDir as NSString).appendingPathComponent(legacyName)
+            guard let resolvedLegacyPath = try? ConfigFileUtils.resolveConfigPath(legacyPath) else { continue }
+            try? FileManager.default.removeItem(atPath: resolvedLegacyPath)
+        }
+    }
 
     /// `<pluginsDirectory>/plugins/calix-agent-monitor.js`.
     /// `pluginsDirectory` is the OpenCode config root

@@ -218,11 +218,19 @@ struct ClaudeHooksConfigManager: Sendable {
         }
     }
 
+    /// Pre-rename script filenames (`calyx-agent-hook`/`calyx-approval-hook`)
+    /// -- recognized alongside the current names so a config written by a
+    /// pre-rename Calyx install still gets its own entries replaced/
+    /// stripped by install/removeHooks, rather than duplicated or
+    /// orphaned as unrecognized "user" entries.
+    private static let legacyScriptFileNames: Set<String> = ["calyx-agent-hook", "calyx-approval-hook"]
+
     /// A command entry is Calix's own when its `command` path's last
-    /// component is `calix-agent-hook` or `calix-approval-hook` —
-    /// independent of the surrounding quoting and of the directory it
-    /// was installed into.
-    private static let ownScriptFileNames: Set<String> = [AgentHookScript.fileName, ApprovalHookScript.fileName]
+    /// component is `calix-agent-hook`, `calix-approval-hook`, or one of
+    /// their pre-rename equivalents — independent of the surrounding
+    /// quoting and of the directory it was installed into.
+    private static let ownScriptFileNames: Set<String> =
+        Set([AgentHookScript.fileName, ApprovalHookScript.fileName]).union(legacyScriptFileNames)
 
     private static func isOwnCommandEntry(_ entry: [String: Any]) -> Bool {
         guard entry["type"] as? String == "command",

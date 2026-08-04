@@ -782,4 +782,92 @@ final class ClaudeHooksConfigManagerTests: XCTestCase {
         XCTAssertEqual(parentAttrs[.type] as? FileAttributeType, .typeSymbolicLink,
                        "The symlinked .claude directory itself must remain a symlink")
     }
+
+    // MARK: - Rename migration: legacy calyx-* script filename recognition
+
+    // A config written by a pre-rename Calyx install has entries pointing
+    // at calyx-agent-hook/calyx-approval-hook. installHooks must recognize
+    // those as its own (by filename alone, independent of directory) and
+    // replace them with the current calix-agent-hook/calix-approval-hook
+    // entries, not add a second, duplicate set alongside them.
+    func test_installHooks_reinstallOverLegacyCalyxNamedEntries_replacesWithoutDuplicating() throws {
+        let legacyScriptPath = tempDir + "/old-bin/calyx-agent-hook"
+        let legacyApprovalScriptPath = tempDir + "/old-bin/calyx-approval-hook"
+        let existingConfig: [String: Any] = [
+            "hooks": [
+                "SessionStart": [
+                    ["hooks": [
+                        ["type": "command", "command": "\"\(legacyScriptPath)\"", "timeout": 5, "async": true],
+                    ]],
+                ],
+                "PreToolUse": [
+                    ["matcher": "*", "hooks": [
+                        ["type": "command", "command": "\"\(legacyScriptPath)\"", "timeout": 5, "async": true],
+                        ["type": "command", "command": "\"\(legacyApprovalScriptPath)\"", "timeout": 600],
+                    ]],
+                ],
+            ],
+        ]
+        try writeConfigDict(existingConfig)
+
+        try ClaudeHooksConfigManager.installHooks(scriptPath: scriptPath, approvalScriptPath: approvalScriptPath, configPath: configPath)
+
+        let dict = try readConfigDict()
+
+        let sessionStartCommands = commandEntries(hookGroups(dict, event: "SessionStart"))
+        XCTAssertEqual(sessionStartCommands.count, 1,
+                       "The legacy calyx-agent-hook entry must be replaced, not duplicated alongside the new one")
+        XCTAssertEqual(sessionStartCommands.first?["command"] as? String, "\"\(scriptPath!)\"",
+                       "SessionStart's surviving entry must reference the current calix-agent-hook path")
+
+        let preToolUseGroups = hookGroups(dict, event: "PreToolUse")
+        let wildcardGroups = preToolUseGroups.filter { ($0["matcher"] as? String) == "*" }
+        XCTAssertEqual(wildcardGroups.count, 1, "Reinstalling over legacy entries must not create a second '*' group")
+
+        let preToolUseCommands = commandEntries(preToolUseGroups)
+        XCTAssertEqual(preToolUseCommands.count, 2,
+                       "PreToolUse must end up with exactly the current monitor + approval pair")
+        XCTAssertFalse(preToolUseCommands.contains { ($0["command"] as? String) == "\"\(legacyScriptPath)\"" },
+                       "The legacy monitor entry must not survive")
+        XCTAssertFalse(preToolUseCommands.contains { ($0["command"] as? String) == "\"\(legacyApprovalScriptPath)\"" },
+                       "The legacy approval entry must not survive")
+        XCTAssertTrue(preToolUseCommands.contains { ($0["command"] as? String) == "\"\(scriptPath!)\"" })
+        XCTAssertTrue(preToolUseCommands.contains { ($0["command"] as? String) == "\"\(approvalScriptPath!)\"" })
+    }
+
+    // removeHooks must also recognize (and strip) legacy calyx-* entries
+    // by filename, leaving co-located user hooks untouched, even when the
+    // config was never touched by a current-version installHooks first.
+    func test_removeHooks_stripsLegacyCalyxNamedEntriesLeavingUserHooksIntact() throws {
+        let legacyScriptPath = tempDir + "/old-bin/calyx-agent-hook"
+        let legacyApprovalScriptPath = tempDir + "/old-bin/calyx-approval-hook"
+        let userCommand = "/usr/local/bin/user-hook"
+        let existingConfig: [String: Any] = [
+            "hooks": [
+                "Stop": [
+                    ["hooks": [
+                        ["type": "command", "command": "\"\(legacyScriptPath)\"", "timeout": 5, "async": true],
+                        ["type": "command", "command": userCommand, "timeout": 3],
+                    ]],
+                ],
+                "PreToolUse": [
+                    ["matcher": "*", "hooks": [
+                        ["type": "command", "command": "\"\(legacyApprovalScriptPath)\"", "timeout": 600],
+                    ]],
+                ],
+            ],
+        ]
+        try writeConfigDict(existingConfig)
+
+        try ClaudeHooksConfigManager.removeHooks(configPath: configPath)
+
+        let dict = try readConfigDict()
+        let stopCommands = commandEntries(hookGroups(dict, event: "Stop"))
+        XCTAssertEqual(stopCommands.count, 1, "The legacy calyx-agent-hook entry must be removed")
+        XCTAssertEqual(stopCommands.first?["command"] as? String, userCommand,
+                       "The co-located user hook must survive removeHooks")
+
+        XCTAssertTrue(hookGroups(dict, event: "PreToolUse").isEmpty,
+                      "The legacy-only PreToolUse group must be fully removed, leaving no dangling empty group")
+    }
 }

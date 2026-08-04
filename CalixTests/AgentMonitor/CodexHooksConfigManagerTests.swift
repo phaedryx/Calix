@@ -459,6 +459,94 @@ final class CodexHooksConfigManagerTests: XCTestCase {
         )
     }
 
+    // MARK: - Rename migration: legacy CALYX marker recognition
+
+    private static let legacyBeginLine = "# BEGIN CALYX AGENT HOOKS (managed by Calyx, do not edit)"
+    private static let legacyEndLine = "# END CALYX AGENT HOOKS"
+
+    // A config.toml written by a pre-rename Calyx install has its managed
+    // block wrapped in the old CALYX markers. areHooksInstalled must
+    // recognize that block on its own (before any reinstall), and
+    // installHooks must strip it and write exactly one fresh block under
+    // the current CALIX markers -- not leave the old block duplicated
+    // alongside the new one.
+    func test_areHooksInstalled_trueAgainstLegacyCalyxMarkerFixtureAlone() throws {
+        let legacyScriptPath = tempDir + "/old-bin/calyx-agent-hook"
+        let existing = """
+        profile = "default"
+        \(Self.legacyBeginLine)
+        [[hooks.SessionStart]]
+        [[hooks.SessionStart.hooks]]
+        type = "command"
+        command = '"\(legacyScriptPath)" codex'
+        timeout = 5
+        \(Self.legacyEndLine)
+        """
+        writeConfig(existing)
+
+        XCTAssertTrue(CodexHooksConfigManager.areHooksInstalled(configPath: configPath),
+                      "areHooksInstalled must recognize the legacy CALYX-marked block on its own")
+    }
+
+    func test_installHooks_reinstallOverLegacyCalyxMarkedBlock_replacesWithSingleCurrentMarkedBlock() throws {
+        let legacyScriptPath = tempDir + "/old-bin/calyx-agent-hook"
+        let existing = """
+        profile = "default"
+        \(Self.legacyBeginLine)
+        [[hooks.SessionStart]]
+        [[hooks.SessionStart.hooks]]
+        type = "command"
+        command = '"\(legacyScriptPath)" codex'
+        timeout = 5
+        \(Self.legacyEndLine)
+        """
+        writeConfig(existing)
+
+        try CodexHooksConfigManager.installHooks(scriptPath: scriptPath, approvalScriptPath: approvalScriptPath, configPath: configPath)
+
+        let content = readConfig()
+        XCTAssertTrue(content.contains("profile = \"default\""), "Unrelated user content must survive")
+
+        XCTAssertFalse(content.contains(Self.legacyBeginLine), "The legacy BEGIN marker must be gone")
+        XCTAssertFalse(content.contains(Self.legacyEndLine), "The legacy END marker must be gone")
+        XCTAssertFalse(content.contains(legacyScriptPath), "The legacy block's stale command entry must not survive")
+
+        XCTAssertEqual(occurrences(of: Self.beginLine, in: content), 1,
+                       "Exactly one current-marked BEGIN must be present, not duplicated alongside the legacy one")
+        XCTAssertEqual(occurrences(of: Self.endLine, in: content), 1)
+        XCTAssertEqual(occurrences(of: expectedCommandLine, in: content), Self.expectedEvents.count,
+                       "The fresh block must write exactly one current-path command entry per event")
+    }
+
+    // removeHooks must also recognize and strip a legacy-marked block on
+    // its own, without ever having gone through a current-version install.
+    func test_removeHooks_removesLegacyCalyxMarkedBlockRestoringUserContent() throws {
+        let legacyScriptPath = tempDir + "/old-bin/calyx-agent-hook"
+        let existing = """
+        profile = "default"
+
+        [mcp_servers.other]
+        url = "http://localhost:9999/mcp"
+        \(Self.legacyBeginLine)
+        [[hooks.SessionStart]]
+        [[hooks.SessionStart.hooks]]
+        type = "command"
+        command = '"\(legacyScriptPath)" codex'
+        timeout = 5
+        \(Self.legacyEndLine)
+        """
+        writeConfig(existing)
+
+        try CodexHooksConfigManager.removeHooks(configPath: configPath)
+
+        let content = readConfig()
+        XCTAssertTrue(content.contains("profile = \"default\""))
+        XCTAssertTrue(content.contains("[mcp_servers.other]"))
+        XCTAssertFalse(content.contains(Self.legacyBeginLine), "The legacy BEGIN marker must be removed")
+        XCTAssertFalse(content.contains(Self.legacyEndLine), "The legacy END marker must be removed")
+        XCTAssertFalse(content.contains(legacyScriptPath))
+    }
+
     // MARK: - areHooksInstalled
 
     func test_areHooksInstalled_reflectsInstallState() throws {

@@ -373,4 +373,53 @@ final class OpenCodePluginManagerTests: XCTestCase {
         XCTAssertEqual(attrsAfter[.type] as? FileAttributeType, .typeSymbolicLink,
                        "The symlink at the plugin's destination path must survive remove() (now dangling)")
     }
+
+    // MARK: - Rename migration: legacy calyx-agent-monitor.js cleanup
+
+    private var legacyPluginPath: String {
+        configRoot + "/plugins/calyx-agent-monitor.js"
+    }
+
+    // A pre-rename Calyx install left plugins/calyx-agent-monitor.js
+    // behind. install() must clean it up alongside writing the current
+    // calix-agent-monitor.js, so a fresh install doesn't leave both an
+    // old- and new-named copy loaded by OpenCode simultaneously.
+    func test_install_removesLegacyNamedPluginFile_leavingOnlyCurrentNamedFile() throws {
+        let pluginsDir = configRoot + "/plugins"
+        try FileManager.default.createDirectory(atPath: pluginsDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: legacyPluginPath, contents: Data("// stale legacy plugin".utf8))
+
+        _ = try OpenCodePluginManager.install(pluginsDirectory: configRoot)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyPluginPath),
+                       "install() must delete the legacy-named plugin file")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedPluginPath),
+                      "install() must still write the current-named plugin file")
+        let content = try String(contentsOfFile: expectedPluginPath, encoding: .utf8)
+        XCTAssertEqual(content, OpenCodePluginManager.scriptBody)
+    }
+
+    // remove() (a full IPC disable) must also clean up a legacy-named
+    // file left over from before the rename, so disabling doesn't leave
+    // any Calix-installed plugin -- old- or new-named -- behind.
+    func test_remove_removesLegacyNamedPluginFileAlongsideCurrentNamedFile() throws {
+        _ = try OpenCodePluginManager.install(pluginsDirectory: configRoot)
+        FileManager.default.createFile(atPath: legacyPluginPath, contents: Data("// stale legacy plugin".utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyPluginPath), "Precondition")
+
+        try OpenCodePluginManager.remove(pluginsDirectory: configRoot)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: expectedPluginPath),
+                       "remove() must delete the current-named plugin file")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyPluginPath),
+                       "remove() must also delete the legacy-named plugin file")
+    }
+
+    // install()'s legacy cleanup must be a true no-op (no throw) when no
+    // legacy file is present -- the common case, post-migration.
+    func test_install_noLegacyFilePresent_doesNotThrowAndWritesCurrentFile() throws {
+        XCTAssertNoThrow(try OpenCodePluginManager.install(pluginsDirectory: configRoot))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: expectedPluginPath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyPluginPath))
+    }
 }
