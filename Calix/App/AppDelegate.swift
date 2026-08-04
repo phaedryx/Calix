@@ -196,6 +196,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // launch unchanged.
         if LaunchEnvironmentPolicy.isUnitTestHost() { return }
 
+        // One-time Calyx -> Calix rename migration. Must run before
+        // SessionRootResolver/SessionPersistenceActor.shared are first used
+        // (restoreSession() below is the first such use). Skipped under
+        // CALIX_UITEST_SESSION_DIR for the same reason SessionPersistenceActor.init
+        // bypasses both real paths under that override: UI tests use a private
+        // flat test directory and must never touch $HOME/.calyx or $HOME/.calix.
+        if ProcessInfo.processInfo.environment["CALIX_UITEST_SESSION_DIR"] == nil {
+            let home = URL(fileURLWithPath: SessionRootResolver().resolve(), isDirectory: true)
+            SessionDirectoryMigrator.migrateIfNeeded(
+                oldRoot: home.appendingPathComponent(".calyx", isDirectory: true),
+                newRoot: home.appendingPathComponent(".calix", isDirectory: true)
+            )
+        }
+
         // Wire the real Ghostty-FFI-backed output reader now that we're
         // definitely not in the unit-test host (a GhosttyCommandOutputReader
         // read touches live ghostty FFI, unsafe there).
