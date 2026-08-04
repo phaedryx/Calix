@@ -2379,7 +2379,7 @@ enum InlayHintResolveTool: SimpleLSPTool {
 
 // MARK: - InlineValueTool
 
-enum InlineValueTool: MCPLSPTool {
+enum InlineValueTool: SimpleLSPTool {
     static let name = "lsp_inline_value"
     static let description = "Get inline value hints for a range while a debugger is stopped at a frame."
     static let inputSchema: [String: AnyCodable] = rangeRequestSchema(
@@ -2406,18 +2406,14 @@ enum InlineValueTool: MCPLSPTool {
             ),
         ]
     )
+    static let method = "textDocument/inlineValue"
+    typealias Result = [InlineValue]?
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: InlineValueParams) {
         let (uri, range) = try bridge.extractRange(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         let frameId = try MCPLSPBridge.optionalInt(
             arguments: arguments,
             key: "frame_id"
@@ -2463,16 +2459,7 @@ enum InlineValueTool: MCPLSPTool {
             range: range,
             context: context
         )
-        do {
-            let result: [InlineValue]? = try await session.sendRequest(
-                method: "textDocument/inlineValue",
-                params: params,
-                resultType: [InlineValue]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
@@ -2496,7 +2483,7 @@ enum FoldingRangeTool: SimpleLSPTool {
 
 // MARK: - SelectionRangeTool
 
-enum SelectionRangeTool: MCPLSPTool {
+enum SelectionRangeTool: SimpleLSPTool {
     static let name = "lsp_selection_range"
     static let description = "Get selection ranges for an array of positions in a document."
     static let inputSchema: [String: AnyCodable] = {
@@ -2528,6 +2515,8 @@ enum SelectionRangeTool: MCPLSPTool {
             "required": AnyCodable(required.map { AnyCodable($0) }),
         ]
     }()
+    static let method = "textDocument/selectionRange"
+    typealias Result = [SelectionRange]?
 
     /// MCP-facing position payload: matches the rest of the bridge's
     /// `{ line, column }` convention. Translated into an LSP `Position`
@@ -2537,17 +2526,11 @@ enum SelectionRangeTool: MCPLSPTool {
         let column: Int
     }
 
-    static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent {
-        let session: LSPSession
-        do {
-            session = try await bridge.resolveSession(arguments: arguments)
-        } catch let err as MCPLSPBridgeError {
-            throw err
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+    static func makeParams(
+        arguments: [String: AnyCodable],
+        bridge: MCPLSPBridge
+    ) throws -> (uri: DocumentUri?, params: SelectionRangeParams) {
         let uri = try bridge.extractDocumentUri(arguments: arguments)
-        try await MCPLSPBridge.ensureFileOpen(session: session, uri: uri)
         guard let positionsAny = arguments["positions"] else {
             throw MCPLSPBridgeError.missingArgument("positions")
         }
@@ -2572,16 +2555,7 @@ enum SelectionRangeTool: MCPLSPTool {
             textDocument: TextDocumentIdentifier(uri: uri),
             positions: positions
         )
-        do {
-            let result: [SelectionRange]? = try await session.sendRequest(
-                method: "textDocument/selectionRange",
-                params: params,
-                resultType: [SelectionRange]?.self
-            )
-            return try MCPLSPBridge.makeJSONContent(result)
-        } catch {
-            return MCPLSPBridge.makeErrorContent(error)
-        }
+        return (uri, params)
     }
 }
 
