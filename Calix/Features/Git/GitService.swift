@@ -84,47 +84,41 @@ enum GitService {
         return parseStatus(output)
     }
 
-    static func commitLog(workDir: String, maxCount: Int, skip: Int) async throws -> [GitCommit] {
-        let format = "%x1f%H%x1f%h%x1f%s%x1f%an%x1f%ar%x1f%P%x1e"
-        let linkedWorktree = try await isLinkedWorktree(workDir: workDir)
-        var args = ["log"]
-        // Linked worktrees share refs, so --all would include sibling branch history.
-        if !linkedWorktree {
-            args.append("--all")
+    /// Resolves the remote's default branch (e.g. "origin/main") via
+    /// `origin/HEAD`, falling back to whichever of `origin/main` /
+    /// `origin/master` actually exists. Returns `nil` when there's no
+    /// `origin` remote at all -- callers treat that as "nothing to
+    /// compare against" rather than an error.
+    static func defaultRemoteBranch(workDir: String) async throws -> String? {
+        if let ref = try? await run(args: ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], workDir: workDir) {
+            let trimmed = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+            let prefix = "refs/remotes/"
+            if trimmed.hasPrefix(prefix) {
+                return String(trimmed.dropFirst(prefix.count))
+            }
         }
-        args += ["--graph", "--format=\(format)",
-                 "--max-count=\(maxCount)", "--skip=\(skip)"]
+        for candidate in ["origin/main", "origin/master"] {
+            if (try? await run(args: ["rev-parse", "--verify", "-q", candidate], workDir: workDir)) != nil {
+                return candidate
+            }
+        }
+        return nil
+    }
 
+    static func fetchOrigin(workDir: String) async throws {
+        _ = try await run(args: ["fetch", "origin", "--quiet"], workDir: workDir)
+    }
+
+    /// Files that differ between `base` and `HEAD`, using three-dot
+    /// (merge-base) semantics so a branch's own changes show up
+    /// regardless of how far `base` has moved since it diverged --
+    /// matching what a PR review would show.
+    static func branchDeltaFiles(workDir: String, base: String) async throws -> [BranchDiffEntry] {
         let output = try await run(
-            args: args,
+            args: ["diff", "--name-status", "-z", "\(base)...HEAD"],
             workDir: workDir
         )
-        return parseCommitLog(output)
-    }
-
-    private static func isLinkedWorktree(workDir: String) async throws -> Bool {
-        let location = try await repositoryLocation(workDir: workDir)
-        return location.gitDirectory != location.gitCommonDirectory
-    }
-
-    static func commitFiles(hash: String, workDir: String) async throws -> [CommitFileEntry] {
-        guard isValidRef(hash) else {
-            throw GitError.commandFailed(exitCode: -1, stderr: "Invalid commit hash", command: "diff-tree")
-        }
-
-        // Check if root commit (no parents)
-        let parentCheck = try? await run(args: ["rev-parse", "\(hash)^"], workDir: workDir)
-        let isRoot = parentCheck == nil
-
-        var args: [String]
-        if isRoot {
-            args = ["diff-tree", "--root", "--no-commit-id", "-r", "--name-status", "-z", hash]
-        } else {
-            args = ["diff-tree", "--no-commit-id", "-r", "--name-status", "-z", hash]
-        }
-
-        let output = try await run(args: args, workDir: workDir)
-        return parseCommitFiles(output, commitHash: hash)
+        return parseNameStatus(output)
     }
 
     static func fileDiff(source: DiffSource) async throws -> String {
@@ -138,11 +132,8 @@ enum GitService {
         case .staged(let path, let wd):
             args = ["diff", "--cached", "--", path]
             workDir = wd
-        case .commit(let hash, let path, let wd):
-            guard isValidRef(hash) else {
-                throw GitError.commandFailed(exitCode: -1, stderr: "Invalid commit hash", command: "show")
-            }
-            args = ["show", "--format=", "--patch", hash, "--", path]
+        case .branchDelta(let path, let base, let wd):
+            args = ["diff", "\(base)...HEAD", "--", path]
             workDir = wd
         case .untracked(let path, let wd):
             return try await untrackedFileDiff(path: path, workDir: wd)
@@ -201,9 +192,10 @@ enum GitService {
     // MARK: - Process Execution
 
     /// Every public entry point above (`repoRoot`, `gitStatus`,
-    /// `commitLog`, `commitFiles`, `fileDiff`) drives this with a
-    /// read-only git subcommand (`status`, `log`, `diff-tree`, `diff`,
-    /// `show`, `rev-parse`) -- there is no write path through here, so
+    /// `branchDeltaFiles`, `fetchOrigin`, `fileDiff`) drives this with a
+    /// read-only (or, for `fetchOrigin`, remote-only) git subcommand
+    /// (`status`, `diff`, `fetch`, `rev-parse`) -- there is no local write
+    /// path through here, so
     /// propagating cancellation straight to the subprocess (rather than
     /// the structural-shield treatment `SessionDaemonClient.kill(id:)`
     /// needs for its WRITE op, R14-C) is safe.
@@ -421,79 +413,10 @@ enum GitService {
         return entries
     }
 
-    static func parseCommitLog(_ output: String) -> [GitCommit] {
+    static func parseNameStatus(_ output: String) -> [BranchDiffEntry] {
         guard !output.isEmpty else { return [] }
 
-        var commits: [GitCommit] = []
-        let lines = output.components(separatedBy: "\n")
-        var accumulatedGraphPrefix = ""
-        var accumulatedData = ""
-
-        for line in lines {
-            var graphPart = ""
-            var dataPart = ""
-            var foundData = false
-
-            for char in line {
-                if !foundData {
-                    if char == "\u{1F}" || char == "\u{1E}" {
-                        foundData = true
-                        dataPart.append(char)
-                    } else if "|*/\\ -_.".contains(char) {
-                        graphPart.append(char)
-                    } else {
-                        graphPart.append(char)
-                    }
-                } else {
-                    dataPart.append(char)
-                }
-            }
-
-            accumulatedData += dataPart
-            if accumulatedGraphPrefix.isEmpty || graphPart.contains("*") {
-                accumulatedGraphPrefix = graphPart
-            }
-
-            if accumulatedData.contains("\u{1E}") {
-                let records = accumulatedData.components(separatedBy: "\u{1E}")
-                for record in records {
-                    let trimmed = record.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { continue }
-
-                    let fields = trimmed.components(separatedBy: "\u{1F}")
-                    // Fields: ["", hash, shortHash, message, author, relativeDate, parents]
-                    // First field is empty because record starts with \x1f
-                    guard fields.count >= 6 else { continue }
-                    let hash = fields[1]
-                    let shortHash = fields[2]
-                    let message = fields[3]
-                    let author = fields[4]
-                    let relativeDate = fields[5]
-                    let parentIDsStr = fields.count > 6 ? fields[6] : ""
-                    let parentIDs = parentIDsStr.isEmpty ? [] : parentIDsStr.split(separator: " ").map(String.init)
-
-                    commits.append(GitCommit(
-                        id: hash,
-                        shortHash: shortHash,
-                        message: message,
-                        author: author,
-                        relativeDate: relativeDate,
-                        parentIDs: parentIDs,
-                        graphPrefix: accumulatedGraphPrefix
-                    ))
-                }
-                accumulatedData = ""
-                accumulatedGraphPrefix = ""
-            }
-        }
-
-        return commits
-    }
-
-    static func parseCommitFiles(_ output: String, commitHash: String) -> [CommitFileEntry] {
-        guard !output.isEmpty else { return [] }
-
-        var entries: [CommitFileEntry] = []
+        var entries: [BranchDiffEntry] = []
         let parts = output.split(separator: "\0", omittingEmptySubsequences: false).map(String.init)
         var i = 0
 
@@ -508,10 +431,7 @@ enum GitService {
                 if i + 1 < parts.count {
                     let path = parts[i + 1]
                     if let status = GitFileStatus(rawValue: String(statusChar)) {
-                        entries.append(CommitFileEntry(
-                            commitHash: commitHash, path: path,
-                            origPath: nil, status: status
-                        ))
+                        entries.append(BranchDiffEntry(path: path, origPath: nil, status: status))
                     }
                     i += 2
                 } else {
@@ -522,10 +442,7 @@ enum GitService {
                     let origPath = parts[i + 1]
                     let newPath = parts[i + 2]
                     let status: GitFileStatus = statusChar == "R" ? .renamed : .copied
-                    entries.append(CommitFileEntry(
-                        commitHash: commitHash, path: newPath,
-                        origPath: origPath, status: status
-                    ))
+                    entries.append(BranchDiffEntry(path: newPath, origPath: origPath, status: status))
                     i += 3
                 } else {
                     i += 1
@@ -536,11 +453,6 @@ enum GitService {
         }
 
         return entries
-    }
-
-    private static func isValidRef(_ ref: String) -> Bool {
-        let pattern = /^[0-9a-fA-F]{4,40}$/
-        return ref.wholeMatch(of: pattern) != nil
     }
 
     private static func mapStatusChar(_ char: Character) -> GitFileStatus? {

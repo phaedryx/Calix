@@ -31,9 +31,8 @@ struct MainContentView: View {
     @Binding var sidebarMode: SidebarMode
     var gitChangesState: GitChangesState = .notLoaded
     var gitEntries: [GitFileEntry] = []
-    var gitCommits: [GitCommit] = []
-    var expandedCommitIDs: Set<String> = []
-    var commitFiles: [String: [CommitFileEntry]] = [:]
+    var branchDeltaBase: String?
+    var branchDeltaEntries: [BranchDiffEntry] = []
 
     var onTabSelected: ((UUID) -> Void)?
     var onGroupSelected: ((UUID) -> Void)?
@@ -45,10 +44,8 @@ struct MainContentView: View {
     var onToggleSidebar: (() -> Void)?
     var onDismissCommandPalette: (() -> Void)?
     var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onCommitFileSelected: ((CommitFileEntry) -> Void)?
+    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
     var onRefreshGitStatus: (() -> Void)?
-    var onLoadMoreCommits: (() -> Void)?
-    var onExpandCommit: ((String) -> Void)?
     var onSidebarWidthChanged: ((CGFloat) -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
@@ -135,9 +132,8 @@ struct MainContentView: View {
                         sidebarMode: $sidebarMode,
                         gitChangesState: gitChangesState,
                         gitEntries: gitEntries,
-                        gitCommits: gitCommits,
-                        expandedCommitIDs: expandedCommitIDs,
-                        commitFiles: commitFiles,
+                        branchDeltaBase: branchDeltaBase,
+                        branchDeltaEntries: branchDeltaEntries,
                         onGroupSelected: onGroupSelected,
                         onTabSelected: onTabSelected,
                         onNewGroup: onNewGroup,
@@ -147,10 +143,8 @@ struct MainContentView: View {
                         onCollapseToggled: onCollapseToggled,
                         onCloseAllTabsInGroup: onCloseAllTabsInGroup,
                         onWorkingFileSelected: onWorkingFileSelected,
-                        onCommitFileSelected: onCommitFileSelected,
+                        onBranchDeltaFileSelected: onBranchDeltaFileSelected,
                         onRefreshGitStatus: onRefreshGitStatus,
-                        onLoadMoreCommits: onLoadMoreCommits,
-                        onExpandCommit: onExpandCommit,
                         onMoveTab: onMoveTab,
                         onMoveGroup: onMoveGroup
                     )

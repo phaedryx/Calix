@@ -64,9 +64,8 @@ enum AccessibilityID {
         static let stagedSection = "calix.git.staged"
         static let unstagedSection = "calix.git.unstaged"
         static let untrackedSection = "calix.git.untracked"
-        static let commitsSection = "calix.git.commits"
+        static let branchDeltaSection = "calix.git.branchDelta"
         static func fileEntry(_ path: String) -> String { "calix.git.file.\(path)" }
-        static func commitRow(_ hash: String) -> String { "calix.git.commit.\(hash)" }
     }
     /// Sessions pane of the Settings window
     /// (Calix/Features/Settings/SettingsWindowController.swift). Applied

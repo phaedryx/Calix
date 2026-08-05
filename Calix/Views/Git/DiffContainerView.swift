@@ -76,8 +76,8 @@ struct DiffToolbarView: View {
                     .padding(.vertical, 2)
                     .background(Capsule().fill(Color.orange.opacity(0.2)))
                     .foregroundStyle(.orange)
-            case .commit(let hash, _, _):
-                Text(String(hash.prefix(7)))
+            case .branchDelta(_, let base, _):
+                Text("Δ \(shortRemoteBranchName(base))")
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.secondary)
             case .untracked:
@@ -141,7 +141,7 @@ struct DiffToolbarView: View {
         switch source {
         case .unstaged(let path, _): path
         case .staged(let path, _): path
-        case .commit(_, let path, _): path
+        case .branchDelta(let path, _, _): path
         case .untracked(let path, _): path
         }
     }

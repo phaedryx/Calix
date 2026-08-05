@@ -424,13 +424,13 @@ struct DiffReviewStoreMultiFileFormatTests {
         store.addComment(lineIndex: 0, lineNumber: 42, oldLineNumber: nil, lineType: .addition, text: "single file comment")
 
         let entries: [(source: DiffSource, store: DiffReviewStore)] = [
-            (.commit(hash: "a1b2c3d4e5f6", path: "Views/Main.swift", workDir: "/tmp"), store),
+            (.branchDelta(path: "Views/Main.swift", base: "origin/main", workDir: "/tmp"), store),
         ]
 
         let output = DiffReviewStore.formatAllForSubmission(entries)
 
         #expect(output.contains("[Code Review] 1 file"))
-        #expect(output.contains("Views/Main.swift (a1b2c3d)"))
+        #expect(output.contains("Views/Main.swift (Δ main)"))
         #expect(output.contains("L42 (+): single file comment"))
     }
 
@@ -439,16 +439,16 @@ struct DiffReviewStoreMultiFileFormatTests {
         #expect(output.isEmpty)
     }
 
-    @Test func test_formatAllForSubmission_commitSourceUsesShortHash() {
+    @Test func test_formatAllForSubmission_branchDeltaSourceUsesShortBranchName() {
         let store = DiffReviewStore()
         store.addComment(lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .context, text: "note")
 
         let entries: [(source: DiffSource, store: DiffReviewStore)] = [
-            (.commit(hash: "abcdef1234567890", path: "file.swift", workDir: "/tmp"), store),
+            (.branchDelta(path: "file.swift", base: "origin/release-2.0", workDir: "/tmp"), store),
         ]
 
         let output = DiffReviewStore.formatAllForSubmission(entries)
-        #expect(output.contains("(abcdef1)"))
+        #expect(output.contains("(Δ release-2.0)"))
     }
 
     @Test func test_formatAllForSubmission_untrackedSource() {

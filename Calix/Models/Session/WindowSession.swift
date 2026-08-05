@@ -24,9 +24,8 @@ class WindowSession: Identifiable {
     var sidebarMode: SidebarMode = .tabs
     var gitChangesState: GitChangesState = .notLoaded
     var gitEntries: [GitFileEntry] = []
-    var gitCommits: [GitCommit] = []
-    var expandedCommitIDs: Set<String> = []
-    var commitFiles: [String: [CommitFileEntry]] = [:]
+    var branchDeltaBase: String?
+    var branchDeltaEntries: [BranchDiffEntry] = []
     var repoRoots: [String: String] = [:]
     var sidebarWidth: CGFloat = SidebarLayout.defaultWidth
 

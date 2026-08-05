@@ -124,7 +124,7 @@ class DiffReviewStore {
         let nonEmpty = entries.filter { $0.store.hasUnsubmittedComments }
         guard !nonEmpty.isEmpty else { return "" }
 
-        // Sort by filePath first, then source kind (staged < unstaged < commit < untracked)
+        // Sort by filePath first, then source kind (staged < unstaged < branchDelta < untracked)
         let sorted = nonEmpty.sorted { a, b in
             let pathA = Self.filePath(from: a.source)
             let pathB = Self.filePath(from: b.source)
@@ -160,7 +160,7 @@ class DiffReviewStore {
 
     private static func filePath(from source: DiffSource) -> String {
         switch source {
-        case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _), .untracked(let p, _):
+        case .unstaged(let p, _), .staged(let p, _), .branchDelta(let p, _, _), .untracked(let p, _):
             return p
         }
     }
@@ -169,7 +169,7 @@ class DiffReviewStore {
         switch source {
         case .staged: return "staged"
         case .unstaged: return "unstaged"
-        case .commit(let hash, _, _): return String(hash.prefix(7))
+        case .branchDelta(_, let base, _): return "Δ \(shortRemoteBranchName(base))"
         case .untracked: return "untracked"
         }
     }
@@ -178,7 +178,7 @@ class DiffReviewStore {
         switch source {
         case .staged: return 0
         case .unstaged: return 1
-        case .commit: return 2
+        case .branchDelta: return 2
         case .untracked: return 3
         }
     }

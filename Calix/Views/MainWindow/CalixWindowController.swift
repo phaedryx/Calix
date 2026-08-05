@@ -86,7 +86,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     private var screenPollTask: Task<Void, Never>?
     /// R14-B sweep addendum item 2 (r14-fix-spec.md): tracks
     /// `processChildExited`'s per-surface reconnect-decision `Task`,
-    /// keyed by surface ID like `diffTasks`/`expandTasks` above, so
+    /// keyed by surface ID like `diffTasks` above, so
     /// `windowWillClose` can cancel it the same way it cancels every
     /// other per-window `Task` instead of leaving it as the sole
     /// untracked fire-and-forget one -- consistency/resource hygiene
@@ -1003,9 +1003,8 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             ),
             gitChangesState: windowSession.gitChangesState,
             gitEntries: windowSession.gitEntries,
-            gitCommits: windowSession.gitCommits,
-            expandedCommitIDs: windowSession.expandedCommitIDs,
-            commitFiles: windowSession.commitFiles,
+            branchDeltaBase: windowSession.branchDeltaBase,
+            branchDeltaEntries: windowSession.branchDeltaEntries,
             onTabSelected: { [weak self] tabID in self?.switchToTab(id: tabID) },
             onGroupSelected: { [weak self] groupID in self?.switchToGroup(id: groupID) },
             onNewTab: { [weak self] in self?.createNewTab() },
@@ -1016,10 +1015,8 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             onToggleSidebar: { [weak self] in self?.toggleSidebar() },
             onDismissCommandPalette: { [weak self] in self?.dismissCommandPalette() },
             onWorkingFileSelected: { [weak self] entry in self?.gitChangesController.handleWorkingFileSelected(entry) },
-            onCommitFileSelected: { [weak self] entry in self?.gitChangesController.handleCommitFileSelected(entry) },
+            onBranchDeltaFileSelected: { [weak self] entry in self?.gitChangesController.handleBranchDeltaFileSelected(entry) },
             onRefreshGitStatus: { [weak self] in self?.gitChangesController.refreshStatus() },
-            onLoadMoreCommits: { [weak self] in self?.gitChangesController.loadMoreCommits() },
-            onExpandCommit: { [weak self] hash in self?.gitChangesController.expandCommit(hash: hash) },
             onSidebarWidthChanged: { [weak self] width in self?.windowSession.sidebarWidth = width },
             onCollapseToggled: { [weak self] in self?.requestSave() },
             onCloseAllTabsInGroup: { [weak self] groupID in self?.closeAllTabsInGroup(id: groupID) },
@@ -2340,17 +2337,15 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         let isRemote = tab.sessionRefs[surfaceID]?.host != nil
 
         // R14-B sweep addendum item 2 (r14-fix-spec.md): tracked in
-        // `childExitedTasks`, cancelled alongside its `diffTasks`/
-        // `expandTasks` siblings in `windowWillClose`, instead of being
-        // left as an untracked fire-and-forget `Task`.
+        // `childExitedTasks`, cancelled alongside its `diffTasks`
+        // sibling in `windowWillClose`, instead of being left as an
+        // untracked fire-and-forget `Task`.
         //
         // R16-2 (r16-fix-spec.md): cancel-before-replace guards against
         // a same-key re-insert leaking the previous Task (cheap
         // insurance even though surfaceIDs are one-shot in practice);
-        // the Task itself removes its own entry once it completes,
-        // mirroring `expandTasks[hash]`'s self-removing Task
-        // (`expandCommit(hash:)`) -- otherwise a completed entry is
-        // retained forever.
+        // the Task itself removes its own entry once it completes --
+        // otherwise a completed entry is retained forever.
         childExitedTasks.insert(surfaceID, task: Task { [weak self] in
             guard let self else { return }
             await self.sessionReconnectCoordinator.childExited(surfaceID: surfaceID, isRemote: isRemote)

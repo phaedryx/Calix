@@ -35,7 +35,12 @@ enum GitFileStatus: String, Sendable {
     case typeChanged = "T"
 }
 
-struct GitFileEntry: Identifiable, Equatable, Sendable {
+protocol GitPathStatus {
+    var path: String { get }
+    var status: GitFileStatus { get }
+}
+
+struct GitFileEntry: Identifiable, Equatable, Sendable, GitPathStatus {
     var id: String { "\(isStaged)-\(status.rawValue)-\(path)" }
     let path: String
     let origPath: String?
@@ -44,21 +49,10 @@ struct GitFileEntry: Identifiable, Equatable, Sendable {
     let renameScore: Int?
 }
 
-// MARK: - Commit Graph
+// MARK: - Branch Delta
 
-struct GitCommit: Identifiable, Equatable, Sendable {
-    let id: String              // full SHA
-    let shortHash: String       // first 7 chars
-    let message: String         // first line
-    let author: String
-    let relativeDate: String
-    let parentIDs: [String]
-    let graphPrefix: String     // git log --graph prefix string
-}
-
-struct CommitFileEntry: Identifiable, Equatable, Sendable {
-    var id: String { "\(commitHash)-\(status.rawValue)-\(path)" }
-    let commitHash: String
+struct BranchDiffEntry: Identifiable, Equatable, Sendable, GitPathStatus {
+    var id: String { "\(status.rawValue)-\(path)" }
     let path: String
     let origPath: String?
     let status: GitFileStatus
@@ -97,6 +91,11 @@ enum DiffLoadState: Sendable {
 enum DiffSource: Sendable, Equatable {
     case unstaged(path: String, workDir: String)
     case staged(path: String, workDir: String)
-    case commit(hash: String, path: String, workDir: String)
+    case branchDelta(path: String, base: String, workDir: String)
     case untracked(path: String, workDir: String)
+}
+
+/// Display-friendly form of a remote branch ref, e.g. "origin/main" -> "main".
+func shortRemoteBranchName(_ ref: String) -> String {
+    ref.split(separator: "/").last.map(String.init) ?? ref
 }

@@ -31,7 +31,7 @@ struct SessionSnapshotDiffTests {
     @Test func terminalAndBrowserPreservedWithDiff() {
         let terminal = Tab(title: "Terminal")
         let browser = Tab(title: "Browser", content: .browser(url: URL(string: "https://example.com")!))
-        let diff = Tab(title: "diff", content: .diff(source: .commit(hash: "abc", path: "f.swift", workDir: "/tmp")))
+        let diff = Tab(title: "diff", content: .diff(source: .branchDelta(path: "f.swift", base: "origin/main", workDir: "/tmp")))
         let group = TabGroup(name: "Test", tabs: [terminal, browser, diff], activeTabID: terminal.id)
 
         let snapshot = group.snapshot()

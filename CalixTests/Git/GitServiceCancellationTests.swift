@@ -16,8 +16,8 @@
 //  trips.
 //
 //  GitService.run(args:workDir:) is `private`, and every public entry
-//  point (repoRoot, gitStatus, commitLog, commitFiles, fileDiff) drives it
-//  with a fixed argv -- there is no seam to hand it an arbitrary
+//  point (repoRoot, gitStatus, branchDeltaFiles, fetchOrigin, fileDiff)
+//  drives it with a fixed argv -- there is no seam to hand it an arbitrary
 //  long-running command the way SystemCommandRunnerCancellationTests
 //  drives `/bin/sh -c 'exec sleep 30'` directly. Instead, this test makes
 //  a REAL `git status` invocation (via the existing public

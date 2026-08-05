@@ -1,7 +1,7 @@
 // GitModelsTests.swift
 // CalixTests
 //
-// Tests for Git data models: GitFileEntry, CommitFileEntry, DiffSource, GitFileStatus.
+// Tests for Git data models: GitFileEntry, BranchDiffEntry, DiffSource, GitFileStatus.
 
 import Testing
 @testable import Calix
@@ -19,9 +19,9 @@ struct GitModelsTests {
         #expect(staged.id != unstaged.id)
     }
 
-    @Test func commitFileEntryIDIsDeterministic() {
-        let a = CommitFileEntry(commitHash: "abc123", path: "bar.swift", origPath: nil, status: .added)
-        let b = CommitFileEntry(commitHash: "abc123", path: "bar.swift", origPath: nil, status: .added)
+    @Test func branchDiffEntryIDIsDeterministic() {
+        let a = BranchDiffEntry(path: "bar.swift", origPath: nil, status: .added)
+        let b = BranchDiffEntry(path: "bar.swift", origPath: nil, status: .added)
         #expect(a.id == b.id)
     }
 

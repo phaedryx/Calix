@@ -62,7 +62,7 @@ struct DiffTabLifecycleTests {
         let c = DiffSource.staged(path: "foo.swift", workDir: "/repo")
         #expect(a != c)
 
-        let d = DiffSource.commit(hash: "abc", path: "foo.swift", workDir: "/repo")
+        let d = DiffSource.branchDelta(path: "foo.swift", base: "origin/main", workDir: "/repo")
         #expect(a != d)
     }
 

@@ -1,7 +1,7 @@
 // GitServiceTests.swift
 // CalixTests
 //
-// Tests for GitService parsers: parseStatus, parseCommitLog, parseCommitFiles.
+// Tests for GitService parsers: parseStatus, parseNameStatus.
 
 import Testing
 @testable import Calix
@@ -112,56 +112,24 @@ struct GitServiceTests {
         #expect(result.count == 2) // modified + untracked, ignored skipped
     }
 
-    // MARK: - Commit Log Parsing
+    // MARK: - Name-Status Parsing (branch delta)
 
-    @Test func emptyCommitLog() {
-        let result = GitService.parseCommitLog("")
-        #expect(result.isEmpty)
-    }
-
-    @Test func singleCommit() {
-        let output = "* \u{1f}abc1234567890\u{1f}abc1234\u{1f}Initial commit\u{1f}Author\u{1f}2 hours ago\u{1f}\u{1e}\n"
-        let result = GitService.parseCommitLog(output)
-        #expect(result.count == 1)
-        #expect(result[0].shortHash == "abc1234")
-        #expect(result[0].message == "Initial commit")
-        #expect(result[0].author == "Author")
-        #expect(result[0].parentIDs.isEmpty)
-    }
-
-    @Test func mergeCommit() {
-        let output = "*   \u{1f}abc123\u{1f}abc1234\u{1f}Merge branch\u{1f}Author\u{1f}1 day ago\u{1f}parent1 parent2\u{1e}\n"
-        let result = GitService.parseCommitLog(output)
-        #expect(result.count == 1)
-        #expect(result[0].parentIDs.count == 2)
-    }
-
-    @Test func commitWithParent() {
-        let output = "* \u{1f}abc123\u{1f}abc1234\u{1f}Some change\u{1f}Dev\u{1f}3 hours ago\u{1f}def456\u{1e}\n"
-        let result = GitService.parseCommitLog(output)
-        #expect(result.count == 1)
-        #expect(result[0].parentIDs == ["def456"])
-    }
-
-    // MARK: - Commit Files Parsing
-
-    @Test func emptyCommitFiles() {
-        let result = GitService.parseCommitFiles("", commitHash: "abc")
+    @Test func emptyNameStatus() {
+        let result = GitService.parseNameStatus("")
         #expect(result.isEmpty)
     }
 
     @Test func modifiedFile() {
         let output = "M\0src/file.swift\0"
-        let result = GitService.parseCommitFiles(output, commitHash: "abc123")
+        let result = GitService.parseNameStatus(output)
         #expect(result.count == 1)
         #expect(result[0].status == .modified)
         #expect(result[0].path == "src/file.swift")
-        #expect(result[0].commitHash == "abc123")
     }
 
     @Test func addedAndDeleted() {
         let output = "A\0new.swift\0D\0old.swift\0"
-        let result = GitService.parseCommitFiles(output, commitHash: "abc")
+        let result = GitService.parseNameStatus(output)
         #expect(result.count == 2)
         #expect(result[0].status == .added)
         #expect(result[1].status == .deleted)
@@ -169,7 +137,7 @@ struct GitServiceTests {
 
     @Test func renamedFile() {
         let output = "R\0old.swift\0new.swift\0"
-        let result = GitService.parseCommitFiles(output, commitHash: "abc")
+        let result = GitService.parseNameStatus(output)
         #expect(result.count == 1)
         #expect(result[0].status == .renamed)
         #expect(result[0].path == "new.swift")

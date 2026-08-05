@@ -13,9 +13,8 @@ struct SidebarContentView: View {
     @Binding var sidebarMode: SidebarMode
     var gitChangesState: GitChangesState = .notLoaded
     var gitEntries: [GitFileEntry] = []
-    var gitCommits: [GitCommit] = []
-    var expandedCommitIDs: Set<String> = []
-    var commitFiles: [String: [CommitFileEntry]] = [:]
+    var branchDeltaBase: String?
+    var branchDeltaEntries: [BranchDiffEntry] = []
     var onGroupSelected: ((UUID) -> Void)?
     var onTabSelected: ((UUID) -> Void)?
     var onNewGroup: (() -> Void)?
@@ -25,10 +24,8 @@ struct SidebarContentView: View {
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
     var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onCommitFileSelected: ((CommitFileEntry) -> Void)?
+    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
     var onRefreshGitStatus: (() -> Void)?
-    var onLoadMoreCommits: (() -> Void)?
-    var onExpandCommit: ((String) -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?
     var onMoveGroup: ((Int, Int) -> Void)?
 
@@ -242,14 +239,11 @@ struct SidebarContentView: View {
                 GitChangesView(
                     gitChangesState: gitChangesState,
                     gitEntries: gitEntries,
-                    gitCommits: gitCommits,
-                    expandedCommitIDs: expandedCommitIDs,
-                    commitFiles: commitFiles,
+                    branchDeltaBase: branchDeltaBase,
+                    branchDeltaEntries: branchDeltaEntries,
                     onWorkingFileSelected: onWorkingFileSelected,
-                    onCommitFileSelected: onCommitFileSelected,
-                    onRefresh: onRefreshGitStatus,
-                    onLoadMore: onLoadMoreCommits,
-                    onExpandCommit: onExpandCommit
+                    onBranchDeltaFileSelected: onBranchDeltaFileSelected,
+                    onRefresh: onRefreshGitStatus
                 )
                 .padding(.top, 10)
 

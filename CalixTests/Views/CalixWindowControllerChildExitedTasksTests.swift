@@ -5,11 +5,12 @@
 //  TDD Red phase for round-16 fix R16-2 (r16-fix-spec.md; evidence in
 //  r15-candidates.md): `processChildExited`'s `Task`, tracked in
 //  `childExitedTasks` (added R14-B, addendum item 2, so
-//  `windowWillClose` could cancel it alongside its `diffTasks`/
-//  `expandTasks` siblings), never removes its own entry once it
-//  completes, unlike `expandTasks[hash]`'s Task (see
-//  `expandCommit(hash:)`), which does `self.expandTasks.removeValue
-//  (forKey: hash)` at the end of its own body. A completed
+//  `windowWillClose` could cancel it alongside its `diffTasks`
+//  sibling), never removes its own entry once it completes, unlike
+//  `reconnectEstablishGraceTasks[newSurfaceID]`'s Task (see
+//  `SessionReconnectCoordinator`), which does `self
+//  .reconnectEstablishGraceTasks.removeValue(forKey: newSurfaceID)` at
+//  the end of its own body. A completed
 //  `childExitedTasks` entry is therefore retained forever (until the
 //  window closes), an unbounded-lifetime leak for any window with
 //  repeated persistent-session disconnects.
@@ -74,8 +75,8 @@ final class CalixWindowControllerChildExitedTasksTests: XCTestCase {
 
     /// R16-2 (r16-fix-spec.md): `processChildExited`'s `Task` must
     /// remove its own `childExitedTasks[surfaceID]` entry once it
-    /// completes, mirroring `expandTasks[hash]`'s self-removing Task
-    /// (`expandCommit(hash:)`). Against the CURRENT code, the Task never
+    /// completes, mirroring `reconnectEstablishGraceTasks`'s
+    /// self-removing Task. Against the CURRENT code, the Task never
     /// touches `childExitedTasks` itself (only `windowWillClose`'s
     /// teardown loop and a same-key re-insert ever remove an entry), so
     /// the entry is still present after the Task has fully completed.
@@ -93,6 +94,6 @@ final class CalixWindowControllerChildExitedTasksTests: XCTestCase {
 
         XCTAssertNil(fixture.controller._childExitedTasksForTesting[fixture.leafID],
                     "childExitedTasks must self-remove its entry once the Task completes, mirroring " +
-                    "expandTasks' pattern -- otherwise a completed entry is retained forever")
+                    "reconnectEstablishGraceTasks' pattern -- otherwise a completed entry is retained forever")
     }
 }

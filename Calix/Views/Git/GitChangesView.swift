@@ -8,19 +8,17 @@ import SwiftUI
 struct GitChangesView: View {
     let gitChangesState: GitChangesState
     let gitEntries: [GitFileEntry]
-    let gitCommits: [GitCommit]
-    let expandedCommitIDs: Set<String>
-    let commitFiles: [String: [CommitFileEntry]]
+    let branchDeltaBase: String?
+    let branchDeltaEntries: [BranchDiffEntry]
 
     var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onCommitFileSelected: ((CommitFileEntry) -> Void)?
+    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
     var onRefresh: (() -> Void)?
-    var onLoadMore: (() -> Void)?
-    var onExpandCommit: ((String) -> Void)?
 
     @State private var isStagedExpanded = true
     @State private var isUnstagedExpanded = true
     @State private var isUntrackedExpanded = true
+    @State private var isBranchDeltaExpanded = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,7 +72,7 @@ struct GitChangesView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         workingChangesSection
-                        commitGraphSection
+                        branchDeltaSection
                     }
                 }
             }
@@ -161,46 +159,41 @@ struct GitChangesView: View {
         }
     }
 
-    // MARK: - Commit Graph
+    // MARK: - Branch Delta
 
     @ViewBuilder
-    private var commitGraphSection: some View {
-        if !gitCommits.isEmpty {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text("Commits")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .accessibilityIdentifier(AccessibilityID.Git.commitsSection)
-
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(gitCommits) { commit in
-                        CommitRowView(
-                            commit: commit,
-                            isExpanded: expandedCommitIDs.contains(commit.id),
-                            files: commitFiles[commit.id] ?? [],
-                            onTap: { onExpandCommit?(commit.id) },
-                            onFileSelected: { file in onCommitFileSelected?(file) }
-                        )
-                        .accessibilityIdentifier(AccessibilityID.Git.commitRow(commit.shortHash))
+    private var branchDeltaSection: some View {
+        if let base = branchDeltaBase, !branchDeltaEntries.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                DisclosureGroup(isExpanded: $isBranchDeltaExpanded) {
+                    ForEach(branchDeltaEntries) { entry in
+                        GitFileRow(entry: entry)
+                            .onTapGesture { onBranchDeltaFileSelected?(entry) }
                     }
-
-                    Color.clear
-                        .frame(height: 1)
-                        .onAppear { onLoadMore?() }
+                } label: {
+                    HStack {
+                        Text("Δ \(shortRemoteBranchName(base))")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text("\(branchDeltaEntries.count)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { isBranchDeltaExpanded.toggle() }
                 }
+                .accessibilityIdentifier(AccessibilityID.Git.branchDeltaSection)
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
         }
     }
 }
 
 // MARK: - Git File Row
 
-private struct GitFileRow: View {
-    let entry: GitFileEntry
+private struct GitFileRow<Entry: GitPathStatus>: View {
+    let entry: Entry
 
     var body: some View {
         HStack(spacing: 6) {
@@ -244,113 +237,6 @@ private struct GitFileRow: View {
         case .deleted: .red
         case .renamed: .blue
         case .copied: .blue
-        case .untracked: .gray
-        case .unmerged: .purple
-        case .typeChanged: .yellow
-        }
-    }
-}
-
-// MARK: - Commit Row
-
-private struct CommitRowView: View {
-    let commit: GitCommit
-    let isExpanded: Bool
-    let files: [CommitFileEntry]
-    var onTap: (() -> Void)?
-    var onFileSelected: ((CommitFileEntry) -> Void)?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: { onTap?() }) {
-                HStack(alignment: .top, spacing: 4) {
-                    GraphPrefixView(prefix: commit.graphPrefix)
-                        .frame(width: graphWidth, alignment: .leading)
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        HStack(spacing: 4) {
-                            Text(commit.shortHash)
-                                .font(.system(.caption2, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                            Text(commit.message)
-                                .font(.caption)
-                                .lineLimit(1)
-                        }
-                        HStack(spacing: 4) {
-                            Text(commit.author)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                            Text(commit.relativeDate)
-                                .font(.caption2)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-
-                    Spacer()
-
-                    if isExpanded {
-                        Image(systemName: "chevron.down")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                ForEach(files) { file in
-                    CommitFileRow(file: file)
-                        .onTapGesture { onFileSelected?(file) }
-                }
-            }
-        }
-    }
-
-    private var graphWidth: CGFloat {
-        max(CGFloat(commit.graphPrefix.count) * 8, 16)
-    }
-}
-
-private struct GraphPrefixView: View {
-    let prefix: String
-
-    var body: some View {
-        Text(AttributedString(CommitGraphRenderer.attributedString(from: CommitGraphRenderer.parse(prefix))))
-    }
-}
-
-private struct CommitFileRow: View {
-    let file: CommitFileEntry
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(file.status.rawValue)
-                .font(.system(.caption2, design: .monospaced, weight: .bold))
-                .foregroundStyle(statusColor)
-                .frame(width: 14)
-
-            Text((file.path as NSString).lastPathComponent)
-                .font(.caption2)
-                .lineLimit(1)
-
-            Spacer()
-        }
-        .padding(.leading, 32)
-        .padding(.trailing, 8)
-        .padding(.vertical, 2)
-        .contentShape(Rectangle())
-        .accessibilityIdentifier(AccessibilityID.Git.fileEntry(file.path))
-    }
-
-    private var statusColor: Color {
-        switch file.status {
-        case .modified: .orange
-        case .added: .green
-        case .deleted: .red
-        case .renamed, .copied: .blue
         case .untracked: .gray
         case .unmerged: .purple
         case .typeChanged: .yellow

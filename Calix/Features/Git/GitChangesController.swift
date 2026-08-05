@@ -2,10 +2,10 @@
 // Calix
 //
 // Git Changes sidebar + diff-tab orchestration, extracted from
-// CalixWindowController: sidebar visibility/monitoring, commit-log
-// pagination, diff-tab open/close lifecycle, and review-comment
-// submit/discard. A thin orchestrator over GitChangesMonitor/GitService/
-// DiffParser/DiffReviewStore -- those stay unchanged.
+// CalixWindowController: sidebar visibility/monitoring, diff-tab
+// open/close lifecycle, and review-comment submit/discard. A thin
+// orchestrator over GitChangesMonitor/GitService/DiffParser/
+// DiffReviewStore -- those stay unchanged.
 //
 // `windowSession` is held by reference (WindowSession is a class), so
 // mutations here are visible to CalixWindowController without any
@@ -38,14 +38,11 @@ final class GitChangesController {
     private var refreshTask: Task<Void, Never>?
     private var gitChangesMonitor: GitChangesMonitor?
     private var gitMonitorStopTask: Task<Void, Never>?
-    private var loadMoreTask: Task<Void, Never>?
-    private var expandTasks = KeyedTaskRegistry<String>()
-    private var hasMoreCommits = true
     private var reviewStores: [UUID: DiffReviewStore] = [:]
-    /// The work tree the currently-loaded `gitEntries`/`gitCommits` sidebar
-    /// content actually belongs to, set whenever `refreshStatus()` loads
-    /// successfully. File/commit selection and pagination must key off this
-    /// -- not `findWorkDir()` -- once a diff tab is active: `findWorkDir()`
+    /// The work tree the currently-loaded `gitEntries`/`branchDeltaEntries`
+    /// sidebar content actually belongs to, set whenever `refreshStatus()` loads
+    /// successfully. File selection must key off this -- not `findWorkDir()`
+    /// -- once a diff tab is active: `findWorkDir()`
     /// falls back to "any terminal tab in the group" when the active tab
     /// isn't a terminal, which can pick a DIFFERENT terminal tab than the
     /// one the sidebar's contents came from and silently resolve every
@@ -105,10 +102,7 @@ final class GitChangesController {
 
     // MARK: - Sidebar / Monitoring
 
-    func refreshStatus(
-        kind: GitChangesRefreshKind = .repositoryMetadata,
-        showsLoadingState: Bool = true
-    ) {
+    func refreshStatus(showsLoadingState: Bool = true) {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             guard let self else { return }
@@ -135,42 +129,23 @@ final class GitChangesController {
                 await self.startMonitoring(repository: repository)
                 guard !Task.isCancelled else { return }
 
-                let entries: [GitFileEntry]
-                var commits: [GitCommit]?
-                if kind == .repositoryMetadata {
-                    let commitCount = showsLoadingState
-                        ? 100
-                        : max(100, self.windowSession.gitCommits.count)
-                    async let statusResult = GitService.gitStatus(workDir: repository.workTree)
-                    async let logResult = GitService.commitLog(
-                        workDir: repository.workTree,
-                        maxCount: commitCount,
-                        skip: 0
-                    )
-                    let (statusEntries, logCommits) = try await (statusResult, logResult)
-                    entries = statusEntries
-                    commits = logCommits
-                } else {
-                    entries = try await GitService.gitStatus(workDir: repository.workTree)
-                    commits = nil
+                // Only fetch on user-visible refreshes (initial load, manual
+                // refresh, tab/sidebar becoming visible again) -- not on every
+                // FSEvents-triggered silent refresh, which would otherwise hit
+                // the network on every file save.
+                if showsLoadingState {
+                    _ = try? await GitService.fetchOrigin(workDir: repository.workTree)
                 }
                 guard !Task.isCancelled else { return }
 
+                async let statusResult = GitService.gitStatus(workDir: repository.workTree)
+                async let deltaResult = self.loadBranchDelta(workDir: repository.workTree)
+                let (entries, delta) = try await (statusResult, deltaResult)
+                guard !Task.isCancelled else { return }
+
                 self.windowSession.gitEntries = entries
-                if let commits {
-                    self.windowSession.gitCommits = commits
-                    self.hasMoreCommits = true
-                    if showsLoadingState {
-                        self.windowSession.expandedCommitIDs = []
-                        self.windowSession.commitFiles = [:]
-                    } else {
-                        let visibleCommitIDs = Set(commits.map(\.id))
-                        self.windowSession.expandedCommitIDs.formIntersection(visibleCommitIDs)
-                        self.windowSession.commitFiles = self.windowSession.commitFiles.filter {
-                            visibleCommitIDs.contains($0.key)
-                        }
-                    }
-                }
+                self.windowSession.branchDeltaBase = delta.base
+                self.windowSession.branchDeltaEntries = delta.entries
                 self.windowSession.gitChangesState = .loaded
                 self.refresh()
             } catch let error as GitService.GitError {
@@ -191,6 +166,16 @@ final class GitChangesController {
         }
     }
 
+    /// Best-effort: no origin remote (or a failed lookup) just means
+    /// nothing to compare against, not a fatal error for the whole tab.
+    private func loadBranchDelta(workDir: String) async -> (base: String?, entries: [BranchDiffEntry]) {
+        guard let base = try? await GitService.defaultRemoteBranch(workDir: workDir) else {
+            return (nil, [])
+        }
+        let entries = (try? await GitService.branchDeltaFiles(workDir: workDir, base: base)) ?? []
+        return (base, entries)
+    }
+
     private func startMonitoring(repository: GitRepositoryLocation) async {
         if let stopTask = gitMonitorStopTask {
             await stopTask.value
@@ -201,9 +186,9 @@ final class GitChangesController {
         if let existingMonitor = gitChangesMonitor {
             monitor = existingMonitor
         } else {
-            monitor = GitChangesMonitor { @MainActor [weak self] kind in
+            monitor = GitChangesMonitor { @MainActor [weak self] _ in
                 guard let self, self.isSidebarVisible else { return }
-                self.refreshStatus(kind: kind, showsLoadingState: false)
+                self.refreshStatus(showsLoadingState: false)
             }
             gitChangesMonitor = monitor
         }
@@ -229,72 +214,6 @@ final class GitChangesController {
         }
     }
 
-    func loadMoreCommits() {
-        guard hasMoreCommits else { return }
-        guard loadMoreTask == nil || loadMoreTask?.isCancelled == true else { return }
-        loadMoreTask = Task { [weak self] in
-            guard let self else { return }
-            let currentCount = self.windowSession.gitCommits.count
-
-            guard let repoRoot = self.currentRepoRoot else { return }
-
-            do {
-                let moreCommits = try await GitService.commitLog(
-                    workDir: repoRoot, maxCount: 50, skip: currentCount
-                )
-                guard !Task.isCancelled else { return }
-                guard !moreCommits.isEmpty else {
-                    self.hasMoreCommits = false
-                    return
-                }
-
-                self.windowSession.gitCommits.append(contentsOf: moreCommits)
-                self.refresh()
-            } catch {
-                // Silently ignore load-more errors
-            }
-            self.loadMoreTask = nil
-        }
-    }
-
-    func expandCommit(hash: String) {
-        if windowSession.expandedCommitIDs.contains(hash) {
-            windowSession.expandedCommitIDs.remove(hash)
-            refresh()
-            return
-        }
-
-        windowSession.expandedCommitIDs.insert(hash)
-        refresh()
-
-        if windowSession.commitFiles[hash] != nil { return }
-
-        guard let repoRoot = currentRepoRoot else { return }
-
-        // Plain subscript store, not `insert(_:task:)`: unlike this
-        // file's other three `KeyedTaskRegistry`s, `hash` is NOT
-        // guaranteed fresh here -- a rapid double-expand of the same
-        // not-yet-loaded commit before this Task completes reaches this
-        // line twice for the same key (the guard above only checks
-        // `commitFiles[hash] != nil`, not whether a fetch is already in
-        // flight). `insert`'s cancel-before-replace would cancel the
-        // first fetch's Task, which -- because `GitService.commitFiles`
-        // routes through `GitService.run`'s cancellation propagation --
-        // would terminate its underlying git subprocess early, changing
-        // today's behavior (both fetches currently run to completion).
-        expandTasks[hash] = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let files = try await GitService.commitFiles(hash: hash, workDir: repoRoot)
-                self.windowSession.commitFiles[hash] = files
-                self.refresh()
-            } catch {
-                // Silently ignore
-            }
-            self.expandTasks.removeValue(forKey: hash)
-        }
-    }
-
     // MARK: - Diff Tabs
 
     func handleWorkingFileSelected(_ entry: GitFileEntry) {
@@ -312,10 +231,10 @@ final class GitChangesController {
         openDiffTab(source: source)
     }
 
-    func handleCommitFileSelected(_ entry: CommitFileEntry) {
-        guard let repoRoot = currentRepoRoot else { return }
+    func handleBranchDeltaFileSelected(_ entry: BranchDiffEntry) {
+        guard let repoRoot = currentRepoRoot, let base = windowSession.branchDeltaBase else { return }
 
-        let source: DiffSource = .commit(hash: entry.commitHash, path: entry.path, workDir: repoRoot)
+        let source: DiffSource = .branchDelta(path: entry.path, base: base, workDir: repoRoot)
         openDiffTab(source: source)
     }
 
@@ -334,7 +253,7 @@ final class GitChangesController {
 
         let fileName: String
         switch source {
-        case .unstaged(let path, _), .staged(let path, _), .commit(_, let path, _), .untracked(let path, _):
+        case .unstaged(let path, _), .staged(let path, _), .branchDelta(let path, _, _), .untracked(let path, _):
             fileName = (path as NSString).lastPathComponent
         }
 
@@ -353,12 +272,10 @@ final class GitChangesController {
         // Plain subscript store, not `insert(_:task:)`: tabID is the id
         // of the `Tab()` just created above, so this key was never
         // registered before -- `insert`'s cancel-before-replace would
-        // never actually match anything here, mirroring
-        // `reconnectEstablishGraceTasks`' own "fresh key" reasoning at
-        // its `insert` call site above. This Task also never self-
-        // removes its own entry once done (unlike `expandTasks`'/
-        // `childExitedTasks`' Tasks) -- a pre-existing divergence kept
-        // as-is here, not something this refactor changes.
+        // never actually match anything here. This Task also never
+        // self-removes its own entry once done (unlike `childExitedTasks`'
+        // Tasks) -- a pre-existing divergence kept as-is here, not
+        // something this refactor changes.
         diffTasks[tabID] = Task { [weak self] in
             guard let self else { return }
             do {
@@ -367,7 +284,7 @@ final class GitChangesController {
 
                 let path: String
                 switch source {
-                case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _), .untracked(let p, _):
+                case .unstaged(let p, _), .staged(let p, _), .branchDelta(let p, _, _), .untracked(let p, _):
                     path = p
                 }
                 let parsed = DiffParser.parse(rawDiff, path: path)
@@ -428,7 +345,7 @@ final class GitChangesController {
               case .diff(let source) = tab.content else { return }
         let filePath: String
         switch source {
-        case .unstaged(let p, _), .staged(let p, _), .commit(_, let p, _), .untracked(let p, _):
+        case .unstaged(let p, _), .staged(let p, _), .branchDelta(let p, _, _), .untracked(let p, _):
             filePath = p
         }
 
@@ -489,11 +406,9 @@ final class GitChangesController {
         diffTasks.cancelAll()
         diffStates.removeAll()
         reviewStores.removeAll()
-        expandTasks.cancelAll()
         refreshTask?.cancel()
         let gitChangesMonitor = gitChangesMonitor
         gitMonitorStopTask?.cancel()
         Task { await gitChangesMonitor?.stop() }
-        loadMoreTask?.cancel()
     }
 }
