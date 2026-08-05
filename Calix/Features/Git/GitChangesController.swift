@@ -42,6 +42,15 @@ final class GitChangesController {
     private var expandTasks = KeyedTaskRegistry<String>()
     private var hasMoreCommits = true
     private var reviewStores: [UUID: DiffReviewStore] = [:]
+    /// The work tree the currently-loaded `gitEntries`/`gitCommits` sidebar
+    /// content actually belongs to, set whenever `refreshStatus()` loads
+    /// successfully. File/commit selection and pagination must key off this
+    /// -- not `findWorkDir()` -- once a diff tab is active: `findWorkDir()`
+    /// falls back to "any terminal tab in the group" when the active tab
+    /// isn't a terminal, which can pick a DIFFERENT terminal tab than the
+    /// one the sidebar's contents came from and silently resolve every
+    /// subsequent click against the wrong repo (empty diffs, no error).
+    private var currentRepoRoot: String?
 
     init(
         windowSession: WindowSession,
@@ -122,6 +131,7 @@ final class GitChangesController {
                 guard !Task.isCancelled else { return }
 
                 self.windowSession.repoRoots[workDir] = repository.workTree
+                self.currentRepoRoot = repository.workTree
                 await self.startMonitoring(repository: repository)
                 guard !Task.isCancelled else { return }
 
@@ -226,8 +236,7 @@ final class GitChangesController {
             guard let self else { return }
             let currentCount = self.windowSession.gitCommits.count
 
-            guard let workDir = self.findWorkDir(),
-                  let repoRoot = self.windowSession.repoRoots[workDir] else { return }
+            guard let repoRoot = self.currentRepoRoot else { return }
 
             do {
                 let moreCommits = try await GitService.commitLog(
@@ -260,8 +269,7 @@ final class GitChangesController {
 
         if windowSession.commitFiles[hash] != nil { return }
 
-        guard let workDir = findWorkDir(),
-              let repoRoot = windowSession.repoRoots[workDir] else { return }
+        guard let repoRoot = currentRepoRoot else { return }
 
         // Plain subscript store, not `insert(_:task:)`: unlike this
         // file's other three `KeyedTaskRegistry`s, `hash` is NOT
@@ -290,8 +298,7 @@ final class GitChangesController {
     // MARK: - Diff Tabs
 
     func handleWorkingFileSelected(_ entry: GitFileEntry) {
-        guard let workDir = findWorkDir(),
-              let repoRoot = windowSession.repoRoots[workDir] else { return }
+        guard let repoRoot = currentRepoRoot else { return }
 
         let source: DiffSource
         if entry.isStaged {
@@ -306,8 +313,7 @@ final class GitChangesController {
     }
 
     func handleCommitFileSelected(_ entry: CommitFileEntry) {
-        guard let workDir = findWorkDir(),
-              let repoRoot = windowSession.repoRoots[workDir] else { return }
+        guard let repoRoot = currentRepoRoot else { return }
 
         let source: DiffSource = .commit(hash: entry.commitHash, path: entry.path, workDir: repoRoot)
         openDiffTab(source: source)
