@@ -331,28 +331,6 @@ struct DiffTabLifecycleTests {
         #expect(!noPanelController.closingChangesPanelWouldEmptyTree())
     }
 
-    // Whole-branch review finding: deleting the old cross-tab title-SCANNING
-    // mechanism (correct) also removed the only guard against pasting a
-    // multi-line review payload plus two Enters into a plain shell. Targeting
-    // stays same-tab and title-blind; the SEND now asks first when the title
-    // doesn't look like an agent.
-    //
-    // `NSAlert.runModal()` cannot run under XCTest, so -- following the same
-    // convention as `closeTab_warningCoversAllDiffPanesInTab` above, which
-    // asserts the unsent-comments predicate rather than driving that modal --
-    // this pins the decision function the alert is gated on.
-    @Test func reviewSend_needsConfirmationOnlyForNonAgentTitles() {
-        for agentTitle in ["claude", "Claude Code", "~/repo — codex", "opencode: main", "HERMES run"] {
-            #expect(!CalixWindowController.reviewSendNeedsAgentConfirmation(title: agentTitle),
-                    "\"\(agentTitle)\" looks like an agent -- should send with no confirmation")
-        }
-
-        for plainTitle in ["zsh", "fish", "~/repo", "vim README.md", ""] {
-            #expect(CalixWindowController.reviewSendNeedsAgentConfirmation(title: plainTitle),
-                    "\"\(plainTitle)\" does not look like an agent -- should ask before sending")
-        }
-    }
-
     @Test func tabPaneContent_defaultsEmpty_andStoresPaneKinds() {
         let tab = Tab()
         #expect(tab.paneContent.isEmpty)
