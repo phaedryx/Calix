@@ -226,7 +226,12 @@ final class GitChangesController {
         }
     }
 
-    func stopMonitoring(cancelRefresh: Bool = true) {
+    /// `cancelRefresh` has no default on purpose: every caller today wants
+    /// `false` (leave an in-flight status load to finish writing to its
+    /// tab), and a silent `true` default is the wrong thing to inherit by
+    /// omission. Keep the parameter -- Task 10 owns monitor lifecycle and
+    /// a tear-everything-down caller is expected.
+    func stopMonitoring(cancelRefresh: Bool) {
         if cancelRefresh {
             refreshTask?.cancel()
         }
@@ -283,9 +288,10 @@ final class GitChangesController {
             // `focusActiveTabImmediately`/`attemptFocusRestore`
             // (CalixWindowController) and `CockpitAppAccess.listPanes`'s
             // `isFocused` all wrong until the user clicks the terminal.
-            // When `anchorLeafID` was a fallback for an empty tree, `insert`
-            // built a fresh single-leaf tree instead and there is nothing
-            // else to focus -- leave what `insert` set.
+            // The `contains` check covers a stale `focusedLeafID` that is
+            // no longer in the tree: `insert` then builds a fresh tree that
+            // never held it, and there is nothing to restore focus to --
+            // leave what `insert` set.
             if tab.splitTree.allLeafIDs().contains(anchorLeafID) {
                 tab.splitTree.focusedLeafID = anchorLeafID
             }

@@ -13,6 +13,14 @@ private let logger = Logger(
 class CalixWindowController: NSWindowController, NSWindowDelegate {
     private(set) var windowSession: WindowSession
     private var splitContainerView: SplitContainerView?
+    #if DEBUG
+    /// Test seam: read-only handle on the live container, so tests can
+    /// assert `rebuildSplitContainer()` actually wired the pane callbacks
+    /// (`onWorkingFileSelected` and friends) instead of leaving them nil.
+    /// Mirrors `_closingTabIDsForTesting`'s naming/gating convention. DO
+    /// NOT use from production code.
+    var _splitContainerViewForTesting: SplitContainerView? { splitContainerView }
+    #endif
     private var hostingView: NSHostingView<MainContentView>?
     private var wasOccluded = false
     /// Not `private` (P4): `SessionCommandPaletteTests` reads
@@ -587,19 +595,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
         // Create the split container (shared across tabs — we swap its tree)
         let container = SplitContainerView(registry: SurfaceRegistry())
-        container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
-            self?.handleDividerDrag(
-                firstChildFirstLeafID: firstChildID,
-                secondChildFirstLeafID: secondChildID,
-                targetRatio: targetRatio,
-                direction: direction,
-                splitRect: splitRect
-            )
-        }
-        container.onActiveLeafChange = { [weak self] leafID in
-            self?.activeTab?.splitTree.focusedLeafID = leafID
-            self?.requestSave()
-        }
+        wireSplitContainerCallbacks(on: container)
         self.splitContainerView = container
 
         let mainContent = buildMainContentView()
@@ -1096,46 +1092,66 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     private func rebuildSplitContainer() {
         guard let tab = activeTab else { return }
         if let container = splitContainerView {
+            // Re-wired on EVERY rebuild, not only on creation. `setupUI()`
+            // runs unconditionally in `init` and already parked a container
+            // here, so the `else` branch below is unreachable in the running
+            // app -- wiring only there left every pane callback nil (dead
+            // file clicks, dead refresh/close buttons, `EmptyView` diff panes)
+            // for the whole window's life. These are all `[weak self]`
+            // forwarders, so reassigning them is idempotent and cheap.
+            // Deliberately ahead of `updateRegistry`, which tears down and
+            // relays pane hosting views.
+            wireSplitContainerCallbacks(on: container)
             container.updateRegistry(tab.registry, tab: tab)
         } else {
             let container = SplitContainerView(registry: tab.registry, tab: tab)
-            container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
-                self?.handleDividerDrag(
-                    firstChildFirstLeafID: firstChildID,
-                    secondChildFirstLeafID: secondChildID,
-                    targetRatio: targetRatio,
-                    direction: direction,
-                    splitRect: splitRect
-                )
-            }
-            container.onActiveLeafChange = { [weak self] leafID in
-                self?.activeTab?.splitTree.focusedLeafID = leafID
-                self?.requestSave()
-            }
-            container.gitChangesController = gitChangesController
-            container.onWorkingFileSelected = { [weak self] entry in
-                self?.gitChangesController.handleWorkingFileSelected(entry)
-            }
-            container.onBranchDeltaFileSelected = { [weak self] entry in
-                self?.gitChangesController.handleBranchDeltaFileSelected(entry)
-            }
-            container.onRefreshGitChanges = { [weak self] in self?.gitChangesController.refreshStatus() }
-            container.onSubmitReview = { [weak self] leafID in
-                self?.gitChangesController.submitDiffReview(leafID: leafID)
-            }
-            container.onDiscardReview = { [weak self] leafID in
-                self?.gitChangesController.discardReview(leafID: leafID)
-            }
-            container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
-            container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }
-            container.onClosePane = { [weak self] leafID in
-                guard let self else { return }
-                guard let group = self.windowSession.groups.first(where: { g in
-                    g.tabs.contains(where: { $0.paneContent[leafID] != nil })
-                }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
-                self.closePane(tab: tab, group: group, leafID: leafID)
-            }
+            wireSplitContainerCallbacks(on: container)
             self.splitContainerView = container
+        }
+    }
+
+    /// Every callback `SplitContainerView` needs from this controller, in
+    /// one place so the create-a-container and reuse-the-container paths
+    /// cannot diverge. `onDeferredLayoutComplete` is deliberately NOT here:
+    /// it is a one-shot continuation `attemptFocusRestore` installs
+    /// situationally, and clobbering it on every rebuild would drop a
+    /// pending focus restore.
+    private func wireSplitContainerCallbacks(on container: SplitContainerView) {
+        container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
+            self?.handleDividerDrag(
+                firstChildFirstLeafID: firstChildID,
+                secondChildFirstLeafID: secondChildID,
+                targetRatio: targetRatio,
+                direction: direction,
+                splitRect: splitRect
+            )
+        }
+        container.onActiveLeafChange = { [weak self] leafID in
+            self?.activeTab?.splitTree.focusedLeafID = leafID
+            self?.requestSave()
+        }
+        container.gitChangesController = gitChangesController
+        container.onWorkingFileSelected = { [weak self] entry in
+            self?.gitChangesController.handleWorkingFileSelected(entry)
+        }
+        container.onBranchDeltaFileSelected = { [weak self] entry in
+            self?.gitChangesController.handleBranchDeltaFileSelected(entry)
+        }
+        container.onRefreshGitChanges = { [weak self] in self?.gitChangesController.refreshStatus() }
+        container.onSubmitReview = { [weak self] leafID in
+            self?.gitChangesController.submitDiffReview(leafID: leafID)
+        }
+        container.onDiscardReview = { [weak self] leafID in
+            self?.gitChangesController.discardReview(leafID: leafID)
+        }
+        container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
+        container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }
+        container.onClosePane = { [weak self] leafID in
+            guard let self else { return }
+            guard let group = self.windowSession.groups.first(where: { g in
+                g.tabs.contains(where: { $0.paneContent[leafID] != nil })
+            }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
+            self.closePane(tab: tab, group: group, leafID: leafID)
         }
     }
 

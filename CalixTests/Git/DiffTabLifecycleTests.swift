@@ -736,7 +736,87 @@ struct DiffTabLifecycleTests {
         #expect(controller.totalReviewCommentCount == 0)
     }
 
+    // MARK: - Pane Callback Wiring
+
+    /// Regression guard (Task 9 review finding): the pane callbacks used to
+    /// be assigned only in `rebuildSplitContainer()`'s create-a-container
+    /// branch, but `setupUI()` runs unconditionally in `init` and parks a
+    /// container in `splitContainerView` first -- so that branch never ran
+    /// in the app and EVERY callback stayed nil. Clicking a file in the
+    /// changes panel did nothing, the refresh and close buttons did nothing,
+    /// and diff panes rendered as `EmptyView` (`paneView(for:)` guards on
+    /// `gitChangesController`). Asserting after a real `rebuildSplitContainer()`
+    /// (driven here through `attachRestoredTab`, an internal entry point that
+    /// calls it) is the whole point: an assertion taken straight after `init`
+    /// would stay green even if the wiring moved back into the dead branch.
+    @Test func rebuildSplitContainer_wiresPaneCallbacksOntoTheExistingContainer() throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let initialTab = makeTerminalTab(pwd: scratchDirectory.path)
+        let group = TabGroup(name: "Default", tabs: [initialTab], activeTabID: initialTab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        // `restoring: true` skips `setupTerminalSurface` (which would need a
+        // real ghostty app), but `setupUI()` still runs -- exactly the state
+        // that made the create-a-container branch unreachable.
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+
+        let restoredTab = makeTerminalTab(pwd: scratchDirectory.path)
+        restoredTab.repoRoot = scratchDirectory.path
+        controller.attachRestoredTab(restoredTab)
+
+        let container = try #require(controller._splitContainerViewForTesting)
+        #expect(container.gitChangesController != nil, "diff panes render as EmptyView without this")
+        #expect(container.onWorkingFileSelected != nil)
+        #expect(container.onBranchDeltaFileSelected != nil)
+        #expect(container.onRefreshGitChanges != nil)
+        #expect(container.onSubmitReview != nil)
+        #expect(container.onDiscardReview != nil)
+        #expect(container.onSubmitAllReviews != nil)
+        #expect(container.onDiscardAllReviews != nil)
+        #expect(container.onClosePane != nil)
+        // Wiring the container must not cost the callbacks that were only
+        // ever set in the reuse path.
+        #expect(container.onTargetRatioChange != nil)
+        #expect(container.onActiveLeafChange != nil)
+
+        // Non-nil isn't enough: fire the closure the panel's file rows call
+        // and confirm it reaches `handleWorkingFileSelected` -> `openDiffTab`,
+        // which synchronously inserts the diff pane before its async load.
+        let leavesBefore = Set(restoredTab.splitTree.allLeafIDs())
+        container.onWorkingFileSelected?(
+            GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        )
+        guard let diffLeafID = restoredTab.splitTree.allLeafIDs().first(where: { !leavesBefore.contains($0) }) else {
+            Issue.record("Clicking a working-tree file inserted no diff leaf -- onWorkingFileSelected is not wired")
+            return
+        }
+        #expect(
+            restoredTab.paneContent[diffLeafID] == .diff(source: .unstaged(path: "one.txt", workDir: scratchDirectory.path))
+        )
+    }
+
     // MARK: - Fixture Helpers
+
+    /// A single-leaf terminal tab whose leaf has a registry entry, so
+    /// `CalixWindowController`'s layout/focus paths see a real surface.
+    private func makeTerminalTab(pwd: String) -> Tab {
+        let registry = SurfaceRegistry()
+        let leafID = UUID()
+        registry._testInsert(view: SurfaceView(frame: .zero), id: leafID)
+        return Tab(pwd: pwd, splitTree: SplitTree(leafID: leafID), registry: registry)
+    }
 
     private func makeScratchDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory
