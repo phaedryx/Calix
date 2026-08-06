@@ -3869,16 +3869,11 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - AI Agent Tab Detection
 
     /// Returns true if a terminal tab title indicates it is running one of the
-    /// supported AI agents (Claude Code, Codex, OpenCode, Hermes). Centralizes
-    /// the title-substring check used by the compose-overlay send path
-    /// (`sendComposeText`) to decide paste timing (double- vs single-Enter),
-    /// and by `sendReviewToAgent` -- via
-    /// `reviewSendNeedsAgentConfirmation(title:)` -- to decide whether to ask
-    /// first. Note the two uses are different in kind: for `sendComposeText`
-    /// this selects *timing*, never whether to send; for review submission it
-    /// gates a soft confirmation only. Neither is target *selection* -- review
-    /// submission still always targets a terminal leaf of the active tab and
-    /// never scans other tabs by title.
+    /// supported AI agents (Claude Code, Codex, OpenCode, Hermes). Used by the
+    /// compose-overlay send path (`sendComposeText`) to decide paste timing
+    /// (double- vs single-Enter). Not used for target *selection* -- review
+    /// submission always targets a terminal leaf of the active tab and never
+    /// scans other tabs by title.
     /// Keep the agent list in sync with `IPCConfigResult` axes.
     private static func isAIAgentTitle(_ title: String) -> Bool {
         title.localizedCaseInsensitiveContains("claude") ||
@@ -3887,36 +3882,17 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         title.localizedCaseInsensitiveContains("hermes")
     }
 
-    /// Whether `sendReviewToAgent` should show its "this doesn't look like an
-    /// AI agent" confirmation before pasting a review payload.
-    ///
-    /// Why this exists: the old cross-tab title-*scanning* mechanism was
-    /// (correctly) deleted, but it incidentally also carried the only guard
-    /// against pasting a multi-line review prompt plus two Enters into a
-    /// plain shell. Same-tab targeting stays exactly as it is; this only adds
-    /// a dismissible "send anyway?" step.
-    ///
-    /// Split out as a pure function because `NSAlert.runModal()` cannot run
-    /// under XCTest -- this is the seam the tests exercise, mirroring how the
-    /// unsent-review-comment alert paths are tested by asserting their
-    /// predicate rather than driving the modal.
-    static func reviewSendNeedsAgentConfirmation(title: String) -> Bool {
-        !isAIAgentTitle(title)
-    }
-
     /// Sends a review payload to a terminal pane in the *active tab* --
     /// never a cross-tab/cross-group search. Diff panes and the terminal
     /// they're reviewing always live together as leaves in the same tab's
     /// `splitTree` (Task 4), so the only ambiguity left is which terminal
     /// leaf to target when the tab has more than one.
     ///
-    /// Targeting is title-blind, but the SEND is not: when the tab's title
-    /// doesn't look like an AI agent
-    /// (`reviewSendNeedsAgentConfirmation(title:)`) the user is asked to
-    /// confirm, since the payload is a multi-line review prompt followed by
-    /// two Enters and a plain shell would try to execute it. Cancelling
-    /// returns `.cancelled`, the same result the multi-terminal picker's
-    /// Cancel button produces.
+    /// Targeting is title-blind, and so is the send: no "does this look like
+    /// an AI agent?" confirmation gates it. That check used to fire on every
+    /// submit for any tab whose title didn't match the supported agents,
+    /// which in practice meant a dismiss-every-time dialog rather than a
+    /// meaningful guard.
     ///
     /// Known limitation: `Tab.title` tracks the tab's *focused* surface (see
     /// `handleSetTitleNotification`) and there is no per-leaf title in this
@@ -3958,16 +3934,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         guard let controller = tab.registry.controller(for: targetLeafID) else {
             showIPCAlert(title: "Send Failed", message: "Could not access terminal surface.")
             return .failed
-        }
-
-        if Self.reviewSendNeedsAgentConfirmation(title: tab.title) {
-            let alert = NSAlert()
-            alert.messageText = "Not an AI Agent?"
-            alert.informativeText = "\"\(tab.title)\" doesn't look like an AI agent. The review will be pasted and submitted with Enter. Send anyway?"
-            alert.alertStyle = .warning
-            alert.addButton(withTitle: "Send Anyway")
-            alert.addButton(withTitle: "Cancel")
-            guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
         }
 
         controller.sendText(payload)

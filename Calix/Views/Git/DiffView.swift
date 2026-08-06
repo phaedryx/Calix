@@ -1,7 +1,14 @@
 // DiffView.swift
 // Calix
 //
-// AppKit-based diff viewer with line number gutter and syntax coloring.
+// AppKit-based diff viewer with syntax coloring. Comment interaction (click
+// a line to comment, drag across lines for a range comment) lives directly
+// on the text view -- there is no separate gutter/ruler view. A gutter would
+// need its own coordinate-space math to translate `NSTextView`'s (flipped)
+// line geometry into its own (previously non-flipped) space, and getting
+// that translation wrong is exactly what caused markers to render
+// misaligned with their lines. Living in the same view as the text avoids
+// that whole bug class.
 
 import AppKit
 
@@ -9,7 +16,6 @@ import AppKit
 final class DiffView: NSView {
     private let scrollView = NSScrollView()
     private let textView = DiffTextView()
-    private let lineNumberView = DiffLineNumberView()
     private(set) var currentDiff: FileDiff?
     var reviewStore: DiffReviewStore?
     private(set) var displayLines: [DisplayLine] = []
@@ -53,12 +59,6 @@ final class DiffView: NSView {
         textView.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
         scrollView.documentView = textView
 
-        // Line number ruler
-        scrollView.rulersVisible = true
-        scrollView.hasVerticalRuler = true
-        scrollView.verticalRulerView = lineNumberView
-        lineNumberView.clientView = textView
-
         NSLayoutConstraint.activate([
             scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -66,34 +66,13 @@ final class DiffView: NSView {
             scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // Observe text changes for ruler updates
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(textDidChange(_:)),
-            name: NSView.frameDidChangeNotification, object: textView
-        )
-
-        // Wire up line click callback (gutter)
-        lineNumberView.onLineClicked = { [weak self] displayLineIndex, displayLine in
+        // Wire up line click/range-select callbacks
+        textView.onLineClicked = { [weak self] displayLineIndex, displayLine in
             self?.handleLineClicked(displayLineIndex: displayLineIndex, displayLine: displayLine)
         }
-
-        // Wire up range selection callback (gutter drag)
-        lineNumberView.onRangeSelected = { [weak self] startIdx, endIdx in
+        textView.onRangeSelected = { [weak self] startIdx, endIdx in
             self?.handleRangeSelected(startDisplayIdx: startIdx, endDisplayIdx: endIdx)
         }
-
-        // Wire up comment text click (💬 lines in text view)
-        textView.onCommentLineClicked = { [weak self] textLineIndex in
-            guard let self, textLineIndex < self.displayLines.count else { return }
-            let displayLine = self.displayLines[textLineIndex]
-            if case .commentBlock = displayLine {
-                self.handleLineClicked(displayLineIndex: textLineIndex, displayLine: displayLine)
-            }
-        }
-    }
-
-    @objc private func textDidChange(_ notification: Notification) {
-        lineNumberView.needsDisplay = true
     }
 
     func display(diff: FileDiff) {
@@ -111,8 +90,6 @@ final class DiffView: NSView {
         if diff.isTruncated {
             appendTruncationBanner()
         }
-
-        lineNumberView.needsDisplay = true
     }
 
     func redisplayWithComments() {
@@ -123,38 +100,25 @@ final class DiffView: NSView {
         if diff.isTruncated {
             appendTruncationBanner()
         }
-        lineNumberView.needsDisplay = true
     }
 
     private func rebuildDisplayLines() {
         guard let diff = currentDiff else {
             displayLines = []
-            lineNumberView.displayLines = []
-            lineNumberView.commentedLineIndices = []
+            textView.displayLines = []
             return
         }
         if let store = reviewStore {
             displayLines = store.buildDisplayLines(from: diff.lines)
-            var indices = Set<Int>()
-            for comment in store.comments {
-                let start = comment.lineIndex
-                let end = comment.endLineIndex ?? comment.lineIndex
-                for i in start...end {
-                    indices.insert(i)
-                }
-            }
-            lineNumberView.commentedLineIndices = indices
         } else {
             displayLines = diff.lines.map { .diff($0) }
-            lineNumberView.commentedLineIndices = []
         }
-        lineNumberView.displayLines = displayLines
+        textView.displayLines = displayLines
     }
 
     private func displayBinaryMessage() {
-        lineNumberView.displayLines = []
-        lineNumberView.commentedLineIndices = []
         displayLines = []
+        textView.displayLines = []
         let message = "Binary file — cannot display diff"
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 14, weight: .medium),
@@ -194,17 +158,30 @@ final class DiffView: NSView {
                 let attrs: [NSAttributedString.Key: Any]
                 switch line.type {
                 case .addition:
-                    attrs = [
-                        .font: font,
-                        .foregroundColor: NSColor(named: "diffAdditionText") ?? NSColor.systemGreen,
-                        .backgroundColor: NSColor.systemGreen.withAlphaComponent(0.08),
-                    ]
+                    let color = NSColor(named: "diffAdditionText") ?? NSColor.systemGreen
+                    let background = NSColor.systemGreen.withAlphaComponent(0.08)
+                    // The leading "+" is already the first character of `text`
+                    // (the raw unified-diff line, kept verbatim by
+                    // `DiffParser`) -- bold just that character so it reads
+                    // as the line's change marker instead of blending into
+                    // the code that follows it.
+                    result.append(NSAttributedString(string: String(text.prefix(1)), attributes: [
+                        .font: boldFont, .foregroundColor: color, .backgroundColor: background,
+                    ]))
+                    result.append(NSAttributedString(string: String(text.dropFirst()), attributes: [
+                        .font: font, .foregroundColor: color, .backgroundColor: background,
+                    ]))
+                    continue
                 case .deletion:
-                    attrs = [
-                        .font: font,
-                        .foregroundColor: NSColor(named: "diffDeletionText") ?? NSColor.systemRed,
-                        .backgroundColor: NSColor.systemRed.withAlphaComponent(0.08),
-                    ]
+                    let color = NSColor(named: "diffDeletionText") ?? NSColor.systemRed
+                    let background = NSColor.systemRed.withAlphaComponent(0.08)
+                    result.append(NSAttributedString(string: String(text.prefix(1)), attributes: [
+                        .font: boldFont, .foregroundColor: color, .backgroundColor: background,
+                    ]))
+                    result.append(NSAttributedString(string: String(text.dropFirst()), attributes: [
+                        .font: font, .foregroundColor: color, .backgroundColor: background,
+                    ]))
+                    continue
                 case .hunkHeader:
                     attrs = [
                         .font: boldFont,
@@ -302,8 +279,7 @@ final class DiffView: NSView {
         popover.behavior = .transient
         activePopover = popover
 
-        let rect = rectForLine(at: atDisplayLineIndex)
-        popover.show(relativeTo: rect, of: lineNumberView, preferredEdge: .maxX)
+        showPopover(popover, atDisplayLineIndex: atDisplayLineIndex)
     }
 
     private func showEditPopover(atDisplayLineIndex: Int, comment: ReviewComment, store: DiffReviewStore) {
@@ -333,8 +309,7 @@ final class DiffView: NSView {
         popover.behavior = .transient
         activePopover = popover
 
-        let rect = rectForLine(at: atDisplayLineIndex)
-        popover.show(relativeTo: rect, of: lineNumberView, preferredEdge: .maxX)
+        showPopover(popover, atDisplayLineIndex: atDisplayLineIndex)
     }
 
     private func handleRangeSelected(startDisplayIdx: Int, endDisplayIdx: Int) {
@@ -389,66 +364,123 @@ final class DiffView: NSView {
         popover.behavior = .transient
         activePopover = popover
 
-        let rect = rectForLine(at: atDisplayLineIndex)
-        popover.show(relativeTo: rect, of: lineNumberView, preferredEdge: .maxX)
+        showPopover(popover, atDisplayLineIndex: atDisplayLineIndex)
     }
 
-    private func rectForLine(at displayLineIndex: Int) -> NSRect {
-        guard let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else {
-            return .zero
-        }
-
-        let content = textView.string
-        let lines = content.components(separatedBy: "\n")
-        guard displayLineIndex < lines.count else { return .zero }
-
-        var charOffset = 0
-        for i in 0..<displayLineIndex {
-            charOffset += lines[i].utf16.count + 1 // +1 for \n
-        }
-
-        let lineLength = max(1, lines[displayLineIndex].utf16.count)
-        let glyphRange = layoutManager.glyphRange(
-            forCharacterRange: NSRange(location: charOffset, length: lineLength),
-            actualCharacterRange: nil
-        )
-        var lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-        lineRect.origin.y += textView.textContainerInset.height
-
-        // Convert from textView coordinates to lineNumberView coordinates
-        let visibleRect = scrollView.documentVisibleRect
-        lineRect.origin.y -= visibleRect.minY
-        lineRect.origin.y += lineNumberView.convert(NSPoint.zero, from: textView).y
-
-        return NSRect(x: 0, y: lineRect.minY, width: lineNumberView.bounds.width, height: lineRect.height)
+    /// Anchors a popover to a narrow rect at the start of the given display
+    /// line, entirely in `textView`'s own (flipped) coordinate space -- no
+    /// cross-view conversion, so this can't drift out of alignment the way
+    /// the old ruler-relative math could.
+    private func showPopover(_ popover: NSPopover, atDisplayLineIndex displayLineIndex: Int) {
+        guard let lineRect = textView.rect(forLineAt: displayLineIndex) else { return }
+        let anchorRect = NSRect(x: lineRect.minX, y: lineRect.minY, width: 1, height: lineRect.height)
+        popover.show(relativeTo: anchorRect, of: textView, preferredEdge: .maxX)
     }
 }
 
-// MARK: - DiffTextView (click-on-comment support)
+// MARK: - DiffTextView (line click / range-select / comment-block editing)
 
 @MainActor
 final class DiffTextView: NSTextView {
-    /// Called when a comment line (💬) is clicked. Parameter is the text line index.
-    var onCommentLineClicked: ((Int) -> Void)?
+    var displayLines: [DisplayLine] = []
+    /// Fired for a plain click (no drag) on a commentable diff line or an
+    /// existing comment block.
+    var onLineClicked: ((Int, DisplayLine) -> Void)?
+    /// Fired when a click-drag's resulting text selection spans more than
+    /// one display line -- dragging to select the lines you want to
+    /// comment on doubles as both "select this text" and "comment on this
+    /// range," so it needs no separate gesture or reserved gutter space.
+    var onRangeSelected: ((Int, Int) -> Void)?
 
-    override func mouseDown(with event: NSEvent) {
-        // Check if click is on a comment line before passing to super
-        if let lineIndex = textLineIndex(at: event) {
-            onCommentLineClicked?(lineIndex)
-            return
-        }
-        super.mouseDown(with: event)
+    private var trackingArea: NSTrackingArea?
+    private var hoveredLineIndex: Int? {
+        didSet { if oldValue != hoveredLineIndex { needsDisplay = true } }
     }
 
-    private func textLineIndex(at event: NSEvent) -> Int? {
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = trackingArea { removeTrackingArea(existing) }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hoveredLineIndex = nil
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard let idx = lineIndex(at: event), isInteractable(idx) else {
+            hoveredLineIndex = nil
+            return
+        }
+        hoveredLineIndex = idx
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        // Faint full-row highlight on hover -- the only discoverability
+        // affordance a commentable line needs, since it lives in the same
+        // coordinate space as the text itself and can't misalign with it.
+        if let idx = hoveredLineIndex, let rect = rect(forLineAt: idx) {
+            NSColor.systemBlue.withAlphaComponent(0.06).setFill()
+            rect.fill()
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let clickedIdx = lineIndex(at: event)
+
+        // `super`'s mouseDown runs its own tracking loop for click-drag text
+        // selection and doesn't return until mouseUp, so by the time it
+        // returns, `selectedRange()` already reflects the whole gesture.
+        super.mouseDown(with: event)
+
+        let selection = selectedRange()
+        guard selection.length > 0 else {
+            // Plain click, no drag: comment on (or edit) the clicked line.
+            guard let idx = clickedIdx, idx < displayLines.count else { return }
+            onLineClicked?(idx, displayLines[idx])
+            return
+        }
+
+        // Dragged a selection: only treat it as a range-comment gesture if
+        // it actually spans more than one line. A same-line selection is
+        // left alone as ordinary copyable text.
+        guard let startIdx = lineIndex(forCharacterIndex: selection.location),
+              let endIdx = lineIndex(forCharacterIndex: max(selection.location, selection.location + selection.length - 1)),
+              startIdx != endIdx else { return }
+        onRangeSelected?(min(startIdx, endIdx), max(startIdx, endIdx))
+    }
+
+    private func isInteractable(_ index: Int) -> Bool {
+        guard index < displayLines.count else { return false }
+        switch displayLines[index] {
+        case .diff(let line):
+            return line.type == .addition || line.type == .deletion || line.type == .context
+        case .commentBlock:
+            return true
+        }
+    }
+
+    /// The display-line index under an event's location, in this view's own
+    /// (flipped) coordinate space.
+    private func lineIndex(at event: NSEvent) -> Int? {
         guard let layoutManager, let textContainer else { return nil }
         let point = convert(event.locationInWindow, from: nil)
         let adjustedPoint = NSPoint(x: point.x - textContainerInset.width,
                                     y: point.y - textContainerInset.height)
         let glyphIndex = layoutManager.glyphIndex(for: adjustedPoint, in: textContainer)
         let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        return lineIndex(forCharacterIndex: charIndex)
+    }
 
+    private func lineIndex(forCharacterIndex charIndex: Int) -> Int? {
         let lines = string.components(separatedBy: "\n")
         var offset = 0
         for (idx, line) in lines.enumerated() {
@@ -460,273 +492,29 @@ final class DiffTextView: NSTextView {
         }
         return nil
     }
-}
 
-// MARK: - Line Number Ruler
+    /// The bounding rect (this view's own coordinate space, full width) of
+    /// the given display line. Used for both the hover highlight and
+    /// popover anchoring -- one coordinate space, one source of truth.
+    func rect(forLineAt index: Int) -> NSRect? {
+        guard let layoutManager, let textContainer else { return nil }
+        let lines = string.components(separatedBy: "\n")
+        guard index < lines.count else { return nil }
 
-@MainActor
-final class DiffLineNumberView: NSRulerView {
-    var displayLines: [DisplayLine] = []
-    var commentedLineIndices: Set<Int> = []
-    var onLineClicked: ((Int, DisplayLine) -> Void)?
-    var onRangeSelected: ((Int, Int) -> Void)?
-    private var dragStartIndex: Int?
-    private var dragCurrentIndex: Int?
-    private var lineRectCache: [(y: CGFloat, height: CGFloat)] = []
-    private var hoveredDisplayLineIndex: Int? {
-        didSet {
-            if oldValue != hoveredDisplayLineIndex { needsDisplay = true }
+        var charOffset = 0
+        for i in 0..<index {
+            charOffset += lines[i].utf16.count + 1 // +1 for \n
         }
-    }
-    private var trackingArea: NSTrackingArea?
 
-    override var requiredThickness: CGFloat { 80 }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let existing = trackingArea { removeTrackingArea(existing) }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow],
-            owner: self,
-            userInfo: nil
+        let lineLength = max(1, lines[index].utf16.count)
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: charOffset, length: lineLength),
+            actualCharacterRange: nil
         )
-        addTrackingArea(area)
-        trackingArea = area
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        hoveredDisplayLineIndex = nil
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        hoveredDisplayLineIndex = displayLineIndex(at: event)
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        // Override default NSRulerView drawing entirely (no background, no border)
-        drawHashMarksAndLabels(in: dirtyRect)
-    }
-
-    override func drawHashMarksAndLabels(in rect: NSRect) {
-        guard let textView = clientView as? NSTextView,
-              let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else { return }
-
-        let visibleRect = scrollView?.documentVisibleRect ?? bounds
-        let font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        let lineNumberColor = NSColor.secondaryLabelColor
-
-        let content = textView.string as NSString
-        guard content.length > 0 else { return }
-
-        let glyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
-        let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-
-        // Track the current diff line index (for commentedLineIndices lookup)
-        var currentDiffLineIndex = 0
-
-        lineRectCache.removeAll()
-
-        let lines = textView.string.components(separatedBy: "\n")
-        var charOffset = 0
-
-        for (idx, line) in lines.enumerated() {
-            let lineLength = line.utf16.count + (idx < lines.count - 1 ? 1 : 0)
-            let lineStart = charOffset
-            charOffset += lineLength
-
-            guard lineStart < charRange.upperBound else { break }
-            guard charOffset > charRange.location else {
-                // Track diff line index even for offscreen lines
-                if idx < displayLines.count, case .diff = displayLines[idx] {
-                    currentDiffLineIndex += 1
-                }
-                lineRectCache.append((y: 0, height: 0))
-                continue
-            }
-
-            guard idx < displayLines.count else { break }
-            let displayLine = displayLines[idx]
-
-            let lineGlyphRange = layoutManager.glyphRange(forCharacterRange: NSRange(location: lineStart, length: max(1, lineLength - 1)), actualCharacterRange: nil)
-            var lineRect = layoutManager.boundingRect(forGlyphRange: lineGlyphRange, in: textContainer)
-            lineRect.origin.y += textView.textContainerInset.height
-
-            let y = lineRect.minY - visibleRect.minY + convert(NSPoint.zero, from: textView).y
-
-            lineRectCache.append((y: y, height: lineRect.height))
-
-            // Draw drag selection highlight
-            if let start = dragStartIndex, let current = dragCurrentIndex {
-                let lo = min(start, current)
-                let hi = max(start, current)
-                if idx >= lo && idx <= hi {
-                    NSColor.systemBlue.withAlphaComponent(0.15).setFill()
-                    NSRect(x: 0, y: y, width: bounds.width, height: lineRect.height).fill()
-                }
-            }
-
-            switch displayLine {
-            case .diff(let diffLine):
-                let isCommentable = diffLine.type == .addition || diffLine.type == .deletion || diffLine.type == .context
-
-                // Draw blue dot for commented lines
-                if commentedLineIndices.contains(currentDiffLineIndex) {
-                    NSColor.systemBlue.setFill()
-                    let dotRect = NSRect(x: 4, y: y + (lineRect.height - 6) / 2, width: 6, height: 6)
-                    NSBezierPath(ovalIn: dotRect).fill()
-                } else if isCommentable && hoveredDisplayLineIndex == idx {
-                    // GitHub-style hover "+" button
-                    let btnSize: CGFloat = 16
-                    let btnRect = NSRect(x: 2, y: y + (lineRect.height - btnSize) / 2, width: btnSize, height: btnSize)
-                    NSColor.systemBlue.setFill()
-                    NSBezierPath(roundedRect: btnRect, xRadius: 3, yRadius: 3).fill()
-                    let plusStr = "+" as NSString
-                    let plusAttrs: [NSAttributedString.Key: Any] = [
-                        .font: NSFont.systemFont(ofSize: 12, weight: .bold),
-                        .foregroundColor: NSColor.white,
-                    ]
-                    let plusSize = plusStr.size(withAttributes: plusAttrs)
-                    plusStr.draw(at: NSPoint(
-                        x: btnRect.midX - plusSize.width / 2,
-                        y: btnRect.midY - plusSize.height / 2
-                    ), withAttributes: plusAttrs)
-                }
-
-                // Draw old line number (left column)
-                if let oldNum = diffLine.oldLineNumber {
-                    let str = "\(oldNum)" as NSString
-                    let attrs: [NSAttributedString.Key: Any] = [
-                        .font: font,
-                        .foregroundColor: lineNumberColor,
-                    ]
-                    let size = str.size(withAttributes: attrs)
-                    let x = 34 - size.width
-                    str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
-                }
-
-                // Draw new line number (right column)
-                if let newNum = diffLine.newLineNumber {
-                    let str = "\(newNum)" as NSString
-                    let attrs: [NSAttributedString.Key: Any] = [
-                        .font: font,
-                        .foregroundColor: lineNumberColor,
-                    ]
-                    let size = str.size(withAttributes: attrs)
-                    let x = 72 - size.width
-                    str.draw(at: NSPoint(x: x, y: y), withAttributes: attrs)
-                }
-
-                currentDiffLineIndex += 1
-
-            case .commentBlock:
-                // Draw blue background band for comment lines (no icon — click 💬 in text to edit)
-                let bandRect = NSRect(x: 0, y: y, width: bounds.width - 1, height: lineRect.height)
-                NSColor.systemBlue.withAlphaComponent(0.15).setFill()
-                bandRect.fill()
-            }
-        }
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let idx = cachedDisplayLineIndex(at: event) ?? displayLineIndex(at: event)
-        if let idx, idx < displayLines.count {
-            // Check if the line is commentable
-            if case .diff(let line) = displayLines[idx] {
-                if line.type == .addition || line.type == .deletion || line.type == .context {
-                    dragStartIndex = idx
-                    dragCurrentIndex = idx
-                    needsDisplay = true
-                    return
-                }
-            }
-            // For comment blocks, handle immediately
-            if case .commentBlock = displayLines[idx] {
-                onLineClicked?(idx, displayLines[idx])
-                return
-            }
-        }
-        super.mouseDown(with: event)
-    }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard dragStartIndex != nil else { return }
-        if let idx = cachedDisplayLineIndex(at: event) {
-            dragCurrentIndex = idx
-            needsDisplay = true
-        }
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        guard let start = dragStartIndex else {
-            super.mouseUp(with: event)
-            return
-        }
-        let current = dragCurrentIndex ?? start
-
-        let lo = min(start, current)
-        let hi = max(start, current)
-
-        // Reset drag state
-        dragStartIndex = nil
-        dragCurrentIndex = nil
-        needsDisplay = true
-
-        if lo == hi {
-            // Single line click — use existing callback
-            if lo < displayLines.count {
-                onLineClicked?(lo, displayLines[lo])
-            }
-        } else {
-            // Range selection
-            onRangeSelected?(lo, hi)
-        }
-    }
-
-    private func cachedDisplayLineIndex(at event: NSEvent) -> Int? {
-        let locationInRuler = convert(event.locationInWindow, from: nil)
-        for (idx, entry) in lineRectCache.enumerated() {
-            if entry.height > 0 && locationInRuler.y >= entry.y && locationInRuler.y < entry.y + entry.height {
-                return idx
-            }
-        }
-        return nil
-    }
-
-    /// Hit-test: returns the displayLines index for the line under the mouse event.
-    private func displayLineIndex(at event: NSEvent) -> Int? {
-        guard let textView = clientView as? NSTextView,
-              let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else { return nil }
-
-        let locationInRuler = convert(event.locationInWindow, from: nil)
-        let visibleRect = scrollView?.documentVisibleRect ?? bounds
-
-        let lines = textView.string.components(separatedBy: "\n")
-        var charOffset = 0
-
-        for (idx, line) in lines.enumerated() {
-            let lineLength = line.utf16.count + (idx < lines.count - 1 ? 1 : 0)
-            let lineStart = charOffset
-            charOffset += lineLength
-
-            guard idx < displayLines.count else { continue }
-
-            let lineGlyphRange = layoutManager.glyphRange(
-                forCharacterRange: NSRange(location: lineStart, length: max(1, lineLength - 1)),
-                actualCharacterRange: nil
-            )
-            var lineRect = layoutManager.boundingRect(forGlyphRange: lineGlyphRange, in: textContainer)
-            lineRect.origin.y += textView.textContainerInset.height
-
-            let y = lineRect.minY - visibleRect.minY + convert(NSPoint.zero, from: textView).y
-            let hitRect = NSRect(x: 0, y: y, width: bounds.width, height: lineRect.height)
-
-            if hitRect.contains(locationInRuler) {
-                return idx
-            }
-        }
-        return nil
+        var lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+        lineRect.origin.x = 0
+        lineRect.origin.y += textContainerInset.height
+        lineRect.size.width = bounds.width
+        return lineRect
     }
 }
