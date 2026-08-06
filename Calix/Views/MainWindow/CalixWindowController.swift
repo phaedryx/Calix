@@ -2331,20 +2331,19 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     /// Closes ONE changes-list/diff pane (a `paneContent` leaf) without
     /// touching the rest of `tab` -- the non-terminal counterpart to
-    /// `closeSurfaceAndCleanUp`'s single-surface close. Unlike that
-    /// method, a pane leaf going away can never empty `tab.splitTree`
-    /// down to nothing on its own in the live app (a pane is only ever
-    /// inserted alongside an existing terminal leaf), so there is no
-    /// "did that leave the tab empty" branch here to mirror -- and
-    /// deliberately no attempt to add one: routing a pane's close
-    /// button through the same window-closing path as
-    /// `closeSurfaceAndCleanUp` would skip
-    /// `confirmQuitBeforeCloseIfWouldTerminate()` entirely. In the one
-    /// edge case where a tab's last terminal surface already exited
-    /// while a diff pane was still open (see `closeSurfaceAndCleanUp`'s
-    /// own doc comment), closing that last remaining pane here leaves a
-    /// leafless-but-still-open tab -- the same "empty" state a plain
-    /// `Cmd+W`/`closeTab(id:)` already handles correctly.
+    /// `closeSurfaceAndCleanUp`'s single-surface close. Deliberately has
+    /// no "did that leave the tab empty, so remove the tab too" branch
+    /// to mirror `closeSurfaceAndCleanUp`'s own: a pane leaf CAN be the
+    /// only leaf left in `tab.splitTree` (e.g. the tab's last terminal
+    /// surface already exited while this pane was open -- see
+    /// `closeSurfaceAndCleanUp`'s own doc comment on that state), but
+    /// routing this pane's close button through the same
+    /// window-closing path `closeSurfaceAndCleanUp` uses would skip
+    /// `confirmQuitBeforeCloseIfWouldTerminate()` entirely. So closing
+    /// that last remaining pane here just leaves a leafless-but-still-
+    /// open tab -- the same "empty" state a plain `Cmd+W`/
+    /// `closeTab(id:)` already handles correctly, with its own
+    /// confirm-quit gate intact.
     ///
     /// `gitChangesController.closeDiffPane(leafID)` only removes the
     /// leaf from the ACTIVE tab's `paneContent` (see that method's own
