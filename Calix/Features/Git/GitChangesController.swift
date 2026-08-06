@@ -126,6 +126,15 @@ final class GitChangesController {
         return source
     }
 
+    /// Test-only: the work tree the live `GitChangesMonitor` is currently
+    /// watching, or `nil` if there's no monitor yet or it's been stopped.
+    /// Lets tests confirm `stopMonitoring` actually tore down the FSEvents
+    /// watch on a tab switch, without depending on a real filesystem event
+    /// round-tripping through debounce.
+    func _monitoredWorkTreeForTesting() async -> String? {
+        await gitChangesMonitor?._monitoredWorkTreeForTesting()
+    }
+
     // MARK: - Sidebar / Monitoring
 
     func refreshStatus(showsLoadingState: Bool = true) {

@@ -807,6 +807,189 @@ struct DiffTabLifecycleTests {
         )
     }
 
+    // MARK: - Task 10: Retarget Monitoring To The Active Tab
+
+    // Real gap this closes: `toggleChangesPanel()` starts a live FSEvents
+    // watch on open and stops it on close, but nothing used to stop it when
+    // focus merely MOVED to a different tab -- switching away from tabA
+    // (panel open) to tabB (no panel) left tabA's repo watched forever, even
+    // though `isChangesPanelVisible` (and therefore the monitor's own
+    // `onRefresh` guard) now reflects whichever tab is CURRENTLY active, not
+    // the one that started the watch. `_monitoredWorkTreeForTesting()` reads
+    // the actor's own `repository` field, so this observes the real teardown
+    // rather than inferring it from a debounced FSEvents round-trip.
+    @Test func switchingAwayFromTabWithOpenChangesPanel_stopsMonitoringItsRepo() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+
+        let tabA = makeTerminalTab(pwd: scratchDirectory.path)
+        tabA.paneContent[UUID()] = .gitChanges // marks tabA's changes panel as open
+        let tabB = makeTerminalTab(pwd: scratchDirectory.path) // panel closed
+
+        let group = TabGroup(name: "Default", tabs: [tabA, tabB], activeTabID: tabA.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+        let gitChangesController = controller._gitChangesControllerForTesting
+
+        // Kick off tabA's monitor the same way `toggleChangesPanel()` would
+        // have when the panel was originally opened (`restoring: true`
+        // skips the initial `activateCurrentTab()` a real launch runs).
+        gitChangesController.refreshStatus()
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectory.path)
+
+        controller.switchToTab(id: tabB.id)
+
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: nil)
+    }
+
+    // Companion regression guard for the SAME fix: switching to a tab whose
+    // OWN changes panel is open must not be treated as "no panel open" --
+    // this failure mode would look identical from a black-box test that
+    // only checked `isChangesPanelVisible` (both branches would report
+    // `false` -> `true` correctly), so it's worth asserting the monitor
+    // actually points at the newly active tab's repo, not merely that it
+    // is non-nil.
+    @Test func switchingToTabWithOpenChangesPanel_monitorsItsRepo() async throws {
+        let scratchDirectoryA = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectoryA) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectoryA.path], in: scratchDirectoryA)
+        let scratchDirectoryB = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectoryB) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectoryB.path], in: scratchDirectoryB)
+
+        let tabA = makeTerminalTab(pwd: scratchDirectoryA.path)
+        tabA.paneContent[UUID()] = .gitChanges
+        let tabB = makeTerminalTab(pwd: scratchDirectoryB.path)
+        tabB.paneContent[UUID()] = .gitChanges
+
+        let group = TabGroup(name: "Default", tabs: [tabA, tabB], activeTabID: tabA.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+        let gitChangesController = controller._gitChangesControllerForTesting
+
+        gitChangesController.refreshStatus()
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectoryA.path)
+
+        controller.switchToTab(id: tabB.id)
+
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectoryB.path)
+    }
+
+    // Acceptance criterion from the plan: reactivating a tab whose changes
+    // panel is already open must show its CACHED `gitEntries` immediately
+    // (`GitChangesView` renders a bare `ProgressView` for `.loading`/
+    // `.notLoaded`, so entering that state even briefly hides the list this
+    // asserts stays visible the whole time). This is a sampled assertion --
+    // green is deterministic once the fix lands (no code path sets `.loading`
+    // on this call), red relies on the real `git status` subprocess this
+    // spawns taking longer than the ~1ms poll interval to return, which it
+    // reliably does.
+    @Test func switchingBackToTabWithCachedEntries_neverShowsALoadingFlash() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let tabA = makeTerminalTab(pwd: scratchDirectory.path)
+        tabA.paneContent[UUID()] = .gitChanges
+        let tabB = makeTerminalTab(pwd: scratchDirectory.path)
+
+        let group = TabGroup(name: "Default", tabs: [tabA, tabB], activeTabID: tabA.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+        let gitChangesController = controller._gitChangesControllerForTesting
+
+        gitChangesController.refreshStatus()
+        let loadDeadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = tabA.gitChangesState { break }
+            guard ContinuousClock.now < loadDeadline else {
+                Issue.record("Timed out waiting for tabA's initial git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!tabA.gitEntries.isEmpty)
+
+        controller.switchToTab(id: tabB.id)
+        controller.switchToTab(id: tabA.id)
+
+        var sawLoading = false
+        let sampleDeadline = ContinuousClock.now + Duration.milliseconds(500)
+        while ContinuousClock.now < sampleDeadline {
+            if case .loading = tabA.gitChangesState { sawLoading = true; break }
+            if case .notLoaded = tabA.gitChangesState { sawLoading = true; break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        #expect(!sawLoading, "reactivating a tab with cached entries must never pass through .loading/.notLoaded")
+        #expect(!tabA.gitEntries.isEmpty, "tabA's cached gitEntries should survive a tab switch without needing a fresh refreshStatus() call")
+    }
+
+    // Free regression guard carried from the plan's own test sketch: `Tab`'s
+    // own storage is untouched by switching `activeGroupID` -- this never
+    // enters `activateCurrentTab()` at all, so it's evidence Task 2's
+    // per-tab storage is wired correctly, not evidence for the cache-then-
+    // refresh behavior above (which does go through `activateCurrentTab()`).
+    @Test func switchingActiveGroup_toTabWithCachedEntries_keepsThemUntilRefreshCompletes() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let tabA = Tab(pwd: scratchDirectory.path)
+        let groupA = TabGroup(name: "A", tabs: [tabA], activeTabID: tabA.id)
+        let tabB = Tab(pwd: scratchDirectory.path)
+        let groupB = TabGroup(name: "B", tabs: [tabB], activeTabID: tabB.id)
+        let session = WindowSession(groups: [groupA, groupB], activeGroupID: groupA.id)
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        controller.refreshStatus()
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = tabA.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for tabA's git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(!tabA.gitEntries.isEmpty)
+
+        session.activeGroupID = groupB.id
+        session.activeGroupID = groupA.id
+
+        #expect(!tabA.gitEntries.isEmpty, "tabA's cached gitEntries should survive a group switch without needing a fresh refreshStatus() call")
+    }
+
     // MARK: - Fixture Helpers
 
     /// A single-leaf terminal tab whose leaf has a registry entry, so
@@ -877,5 +1060,29 @@ struct DiffTabLifecycleTests {
             return
         }
         Issue.record("Timed out waiting for diff state on leaf \(leafID)")
+    }
+
+    /// Polls `GitChangesController._monitoredWorkTreeForTesting()` until it
+    /// matches `expected` (`nil` meaning "no monitor running"), or fails the
+    /// test after `timeout`. Standardizes both sides through `URL` so `/tmp`
+    /// vs. its `/private/tmp` symlink resolution can't produce a false
+    /// mismatch -- `GitChangesMonitor` standardizes the path it stores the
+    /// same way.
+    private func waitForMonitoredWorkTree(
+        _ controller: GitChangesController, toBe expected: String?,
+        timeout: Duration = .seconds(5)
+    ) async throws {
+        let expectedStandardized = expected.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        let deadline = ContinuousClock.now + timeout
+        while true {
+            let actual = await controller._monitoredWorkTreeForTesting()
+            let actualStandardized = actual.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+            if actualStandardized == expectedStandardized { return }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for monitored work tree to be \(String(describing: expected)), last saw \(String(describing: actual))")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
     }
 }

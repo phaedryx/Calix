@@ -21,6 +21,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// NOT use from production code.
     var _splitContainerViewForTesting: SplitContainerView? { splitContainerView }
     #endif
+    #if DEBUG
+    /// Test seam: read-only handle on `gitChangesController`, so tests can
+    /// poll `_monitoredWorkTreeForTesting()` to confirm `activateCurrentTab()`
+    /// actually stops the git-changes monitor when switching to a tab whose
+    /// changes panel isn't open. DO NOT use from production code.
+    var _gitChangesControllerForTesting: GitChangesController { gitChangesController }
+    #endif
     private var hostingView: NSHostingView<MainContentView>?
     private var wasOccluded = false
     /// Not `private` (P4): `SessionCommandPaletteTests` reads
@@ -1203,7 +1210,26 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         }
         retargetComposeOverlayIfNeeded()
         if gitChangesController.isChangesPanelVisible {
-            gitChangesController.refreshStatus()
+            // `showsLoadingState: false` unless this tab has never resolved
+            // its repo -- mirrors `toggleChangesPanel()`'s re-open branch.
+            // A tab whose panel was already open has last-good `gitEntries`
+            // cached on it, so re-activating it must show that immediately
+            // (no spinner flash overwriting the list) while the background
+            // refresh brings it up to date. Also means `fetchOrigin` (gated
+            // on `showsLoadingState`) is skipped here -- ahead/behind can go
+            // briefly stale until a manual refresh, same tradeoff FSEvents-
+            // triggered silent refreshes already make.
+            gitChangesController.refreshStatus(showsLoadingState: tab.repoRoot == nil)
+        } else {
+            // The tab being left behind may have had its own changes panel
+            // open with a live FSEvents watch on its repo (`toggleChangesPanel`
+            // starts that watch on open but only stops it when THAT tab's
+            // panel is closed, not when focus merely moves elsewhere).
+            // Reconcile monitor state to the newly active tab here: since
+            // this branch means the new tab's panel isn't open, nothing
+            // should still be watched. `stopMonitoring` is a no-op if
+            // nothing was ever started.
+            gitChangesController.stopMonitoring(cancelRefresh: false)
         }
     }
 
