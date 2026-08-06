@@ -256,6 +256,28 @@ final class GitChangesController {
 
     // MARK: - Changes Panel
 
+    /// True when `toggleChangesPanel()` would take the CLOSE branch and doing
+    /// so would leave the active tab's `splitTree` with no leaves at all.
+    ///
+    /// Reachable state: a tab whose only terminal shell exits keeps the tab
+    /// alive as long as its changes panel is still open (deliberate, Task 5).
+    /// Closing that panel then removes the last leaf. `closePane` (the pane's
+    /// own X button) already detects this and hands off to
+    /// `CalixWindowController.closeTab(id:)`; the toggle/palette route did not,
+    /// leaving a tab that renders nothing and is unrecoverable except via
+    /// Cmd+W.
+    ///
+    /// This is a pure query on purpose: tab closing belongs to
+    /// `CalixWindowController`, and its `closeTab(id:)` has a
+    /// quit-confirmation gate the user can cancel. Asking BEFORE mutating
+    /// anything means a cancelled prompt leaves the panel open and intact,
+    /// rather than already-removed with no tab to put it back in.
+    func closingChangesPanelWouldEmptyTree() -> Bool {
+        guard let tab = activeTab, case .terminal = tab.content else { return false }
+        guard let existingLeafID = tab.paneContent.first(where: { $0.value == .gitChanges })?.key else { return false }
+        return tab.splitTree.remove(existingLeafID).tree.isEmpty
+    }
+
     /// Opens or closes the ACTIVE tab's git-changes panel: exactly one
     /// `.gitChanges` leaf inserted beside (or removed from) that tab's own
     /// `splitTree`. This is the replacement for the window-level `.changes`
@@ -266,7 +288,12 @@ final class GitChangesController {
     /// Driven by the `git.showChanges` palette command and the tab bar's
     /// changes-panel button, both via
     /// `CalixWindowController.toggleGitChangesPanel()`, which additionally
-    /// re-asserts AppKit first responder afterwards (see its comment).
+    /// re-asserts AppKit first responder afterwards (see its comment) and
+    /// -- because tab closing is not this controller's job -- checks
+    /// `closingChangesPanelWouldEmptyTree()` FIRST and routes through
+    /// `closeTab(id:)` instead of calling this method at all when the close
+    /// would leave the tab with no leaves. This method itself deliberately
+    /// does not guard against that; see that query's doc comment.
     func toggleChangesPanel() {
         guard let tab = activeTab else { return }
         // A browser tab renders `BrowserContainerView`, not

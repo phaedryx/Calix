@@ -190,8 +190,24 @@ struct SplitTree: Codable, Equatable, Sendable {
 
     // MARK: - Focus Navigation
 
-    func focusTarget(for direction: FocusDirection, from leafID: UUID) -> UUID? {
-        let leaves = allLeafIDs()
+    /// `excluding` names leaves that must never be chosen as a focus target,
+    /// while still counting for geometry. `SplitTree` has no notion of what a
+    /// leaf renders; the caller supplies that. In practice
+    /// `CalixWindowController.handleGotoSplitNotification` passes
+    /// `Set(tab.paneContent.keys)` -- the tab's git-changes/diff pane leaves,
+    /// which have no ghostty surface, so landing `focusedLeafID` on one leaves
+    /// the terminal with no first responder and keystrokes going nowhere until
+    /// the user clicks it.
+    ///
+    /// Excluded leaves are dropped from the cyclic `next`/`previous` order
+    /// (navigation skips over them rather than stopping) and from the spatial
+    /// candidate set (the search falls through to the next-nearest eligible
+    /// leaf). `leafID` itself is never excluded -- it is the leaf navigation
+    /// starts from, and an excluded start simply yields `nil`.
+    func focusTarget(for direction: FocusDirection, from leafID: UUID, excluding excluded: Set<UUID> = []) -> UUID? {
+        let leaves = excluded.isEmpty
+            ? allLeafIDs()
+            : allLeafIDs().filter { $0 == leafID || !excluded.contains($0) }
         guard leaves.count > 1 else { return nil }
         guard let currentIndex = leaves.firstIndex(of: leafID) else { return nil }
 
@@ -205,18 +221,24 @@ struct SplitTree: Codable, Equatable, Sendable {
             return leaves[idx]
 
         case .spatial(let spatialDir):
-            return spatialFocusTarget(from: leafID, direction: spatialDir)
+            return spatialFocusTarget(from: leafID, direction: spatialDir, excluding: excluded)
         }
     }
 
-    private func spatialFocusTarget(from leafID: UUID, direction: SpatialDirection) -> UUID? {
+    private func spatialFocusTarget(
+        from leafID: UUID, direction: SpatialDirection, excluding excluded: Set<UUID>
+    ) -> UUID? {
         guard let root else { return nil }
+        // Slots are built from the WHOLE tree: an excluded leaf still occupies
+        // screen space, so removing it here would shift every other leaf's
+        // bounds and corrupt the direction test.
         let slots = Self.buildSpatialSlots(node: root, bounds: CGRect(x: 0, y: 0, width: 1, height: 1))
 
         guard let currentSlot = slots.first(where: { $0.id == leafID }) else { return nil }
 
         let candidates = slots.filter { slot in
             guard slot.id != leafID else { return false }
+            guard !excluded.contains(slot.id) else { return false }
             switch direction {
             case .left:  return slot.bounds.midX < currentSlot.bounds.minX
             case .right: return slot.bounds.midX > currentSlot.bounds.maxX

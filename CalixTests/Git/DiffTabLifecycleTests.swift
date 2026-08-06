@@ -246,6 +246,113 @@ struct DiffTabLifecycleTests {
         #expect(group.tabs.contains(where: { $0.id == otherTab.id }))
     }
 
+    // Whole-branch review finding: the zombie-tab state above was reachable
+    // by a SECOND route that `closePane`'s fix did not cover. A tab whose only
+    // terminal exited survives on its still-open changes panel; closing that
+    // panel via the tab-bar toggle button / `git.showChanges` palette command
+    // (rather than the pane's own X button) removed the last `splitTree` leaf
+    // with no empty-tree check anywhere, leaving a tab that renders nothing
+    // and is unrecoverable except via Cmd+W.
+    //
+    // Driven through the real palette command -- `toggleGitChangesPanel()` is
+    // private and this is exactly how the button and the command reach it, so
+    // no test-only seam is needed. Note that
+    // `GitChangesController.toggleChangesPanel()` on its own still will NOT
+    // close the tab, by design: tab closing belongs to
+    // `CalixWindowController`, which asks
+    // `closingChangesPanelWouldEmptyTree()` first and routes through
+    // `closeTab(id:)` instead of calling the toggle at all. Two tabs in the
+    // fixture so `closeTab` stays off its quit-confirmation gate.
+    @Test func toggleGitChangesPanelCommand_lastLeafInTab_closesTheTabInstead() {
+        let paneLeafID = UUID()
+        let closingTab = Tab(title: "Closing")
+        closingTab.splitTree = SplitTree(leafID: paneLeafID)
+        closingTab.paneContent[paneLeafID] = .gitChanges
+
+        let otherTab = Tab(title: "Other")
+        let group = TabGroup(name: "Default", tabs: [closingTab, otherTab], activeTabID: closingTab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+
+        guard let toggleCommand = controller.commandRegistry.allCommands.first(where: { $0.id == "git.showChanges" }) else {
+            Issue.record("Expected the git.showChanges palette command to be registered")
+            return
+        }
+        toggleCommand.handler()
+
+        #expect(!group.tabs.contains(where: { $0.id == closingTab.id }),
+                "closing the changes panel that held the tab's last leaf should close the tab, not leave an empty zombie")
+        #expect(group.tabs.contains(where: { $0.id == otherTab.id }))
+    }
+
+    // The pure query the fix above hangs on: only true when the CLOSE branch
+    // would run AND it would take the tab's last leaf with it. A tab that
+    // still has a terminal beside the panel must toggle normally.
+    @Test func closingChangesPanelWouldEmptyTree_onlyWhenThePanelIsTheLastLeaf() {
+        let paneLeafID = UUID()
+        let soloPanelTab = Tab(title: "Solo Panel")
+        soloPanelTab.splitTree = SplitTree(leafID: paneLeafID)
+        soloPanelTab.paneContent[paneLeafID] = .gitChanges
+        let soloSession = WindowSession(initialTab: soloPanelTab)
+        let soloController = GitChangesController(
+            windowSession: soloSession, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+        #expect(soloController.closingChangesPanelWouldEmptyTree())
+
+        let terminalLeafID = UUID()
+        let pairedPaneLeafID = UUID()
+        let pairedTab = Tab(title: "Terminal + Panel")
+        pairedTab.splitTree = SplitTree(leafID: terminalLeafID)
+        (pairedTab.splitTree, _) = pairedTab.splitTree.insert(
+            at: terminalLeafID, direction: .horizontal, newID: pairedPaneLeafID)
+        pairedTab.paneContent[pairedPaneLeafID] = .gitChanges
+        let pairedSession = WindowSession(initialTab: pairedTab)
+        let pairedController = GitChangesController(
+            windowSession: pairedSession, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+        #expect(!pairedController.closingChangesPanelWouldEmptyTree())
+
+        // No panel open at all -- the toggle would take its OPEN branch.
+        let noPanelTab = Tab(title: "No Panel")
+        noPanelTab.splitTree = SplitTree(leafID: UUID())
+        let noPanelSession = WindowSession(initialTab: noPanelTab)
+        let noPanelController = GitChangesController(
+            windowSession: noPanelSession, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+        #expect(!noPanelController.closingChangesPanelWouldEmptyTree())
+    }
+
+    // Whole-branch review finding: deleting the old cross-tab title-SCANNING
+    // mechanism (correct) also removed the only guard against pasting a
+    // multi-line review payload plus two Enters into a plain shell. Targeting
+    // stays same-tab and title-blind; the SEND now asks first when the title
+    // doesn't look like an agent.
+    //
+    // `NSAlert.runModal()` cannot run under XCTest, so -- following the same
+    // convention as `closeTab_warningCoversAllDiffPanesInTab` above, which
+    // asserts the unsent-comments predicate rather than driving that modal --
+    // this pins the decision function the alert is gated on.
+    @Test func reviewSend_needsConfirmationOnlyForNonAgentTitles() {
+        for agentTitle in ["claude", "Claude Code", "~/repo — codex", "opencode: main", "HERMES run"] {
+            #expect(!CalixWindowController.reviewSendNeedsAgentConfirmation(title: agentTitle),
+                    "\"\(agentTitle)\" looks like an agent -- should send with no confirmation")
+        }
+
+        for plainTitle in ["zsh", "fish", "~/repo", "vim README.md", ""] {
+            #expect(CalixWindowController.reviewSendNeedsAgentConfirmation(title: plainTitle),
+                    "\"\(plainTitle)\" does not look like an agent -- should ask before sending")
+        }
+    }
+
     @Test func tabPaneContent_defaultsEmpty_andStoresPaneKinds() {
         let tab = Tab()
         #expect(tab.paneContent.isEmpty)

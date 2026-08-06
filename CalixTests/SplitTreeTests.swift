@@ -149,6 +149,65 @@ final class SplitTreeTests: XCTestCase {
         XCTAssertEqual(wrapped, idB, "Previous from first leaf should wrap to the last leaf")
     }
 
+    // MARK: goto-split must never land focus on a non-terminal pane leaf
+    //
+    // `SplitTree` has no concept of "pane leaf" vs "terminal leaf" -- that
+    // lives in `Tab.paneContent`. The caller
+    // (`CalixWindowController.handleGotoSplitNotification`, the goto-split /
+    // Cmd+Option+Arrow handler) passes `Set(tab.paneContent.keys)` as
+    // `excluding:`. Without the filter, `Cmd+Option+Arrow` on a tab with a
+    // changes/diff pane open could point `focusedLeafID` at that pane, leaving
+    // the terminal with no first responder (keystrokes going nowhere) until the
+    // user clicked it -- the same bug class Task 4 fixed for `openDiffTab`'s
+    // insert path and Task 9 for `toggleChangesPanel`'s.
+    //
+    // These tests pin the `excluding:` contract on `SplitTree` itself; the
+    // handler passing the right set is verified by inspection of that call
+    // site.
+
+    func test_should_skip_excluded_pane_leaf_when_navigating_next() {
+        // A | pane | B — `next` from A must skip the pane and land on B.
+        let (tree, idA) = makeSingleLeafTree()
+        let (tree2, paneID) = tree.insert(at: idA, direction: .horizontal)
+        let (tree3, idB) = tree2.insert(at: paneID, direction: .horizontal)
+
+        XCTAssertEqual(tree3.allLeafIDs(), [idA, paneID, idB],
+                       "Precondition: the pane leaf sits between the two terminals")
+        XCTAssertEqual(tree3.focusTarget(for: .next, from: idA), paneID,
+                       "Precondition: unfiltered navigation still lands on the pane")
+
+        XCTAssertEqual(tree3.focusTarget(for: .next, from: idA, excluding: [paneID]), idB,
+                       "Next should skip the pane leaf and land on the following terminal")
+        XCTAssertEqual(tree3.focusTarget(for: .previous, from: idA, excluding: [paneID]), idB,
+                       "Previous should skip the pane leaf and wrap to the other terminal")
+    }
+
+    func test_should_return_nil_when_the_only_other_leaf_is_excluded() {
+        // terminal | pane — there is no other terminal to move to at all.
+        let (tree, terminalID) = makeSingleLeafTree()
+        let (tree2, paneID) = tree.insert(at: terminalID, direction: .horizontal)
+
+        XCTAssertNil(tree2.focusTarget(for: .next, from: terminalID, excluding: [paneID]),
+                     "Next must not select the pane leaf when it is the only other leaf")
+        XCTAssertNil(tree2.focusTarget(for: .previous, from: terminalID, excluding: [paneID]),
+                     "Previous must not select the pane leaf when it is the only other leaf")
+        XCTAssertNil(tree2.focusTarget(for: .spatial(.right), from: terminalID, excluding: [paneID]),
+                     "Spatial navigation must not select the pane leaf either")
+    }
+
+    func test_should_skip_excluded_pane_leaf_for_spatial_navigation() {
+        // Horizontal chain terminal | pane | terminal, so `right` from the
+        // leftmost leaf has the pane as its nearest candidate.
+        let (tree, idA) = makeSingleLeafTree()
+        let (tree2, paneID) = tree.insert(at: idA, direction: .horizontal)
+        let (tree3, idB) = tree2.insert(at: paneID, direction: .horizontal)
+
+        XCTAssertEqual(tree3.focusTarget(for: .spatial(.right), from: idA), paneID,
+                       "Precondition: unfiltered spatial navigation picks the nearer pane")
+        XCTAssertEqual(tree3.focusTarget(for: .spatial(.right), from: idA, excluding: [paneID]), idB,
+                       "Spatial navigation should fall through to the next terminal")
+    }
+
     // ==================== 4. Equalize ====================
 
     func test_should_set_all_ratios_to_half_when_equalized() {

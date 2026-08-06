@@ -2401,14 +2401,22 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// closing path here would skip that gate entirely -- which was
     /// wrong: `closeTab(id:)` has always had it.)
     ///
-    /// The unsent-review-comment check just below covers the leaf being
-    /// closed here; `closeTab(id:)`'s own check further down is
-    /// separately (and currently incorrectly) keyed by tab id against
-    /// the leaf-keyed `reviewStores` dict, so it's a no-op today
-    /// regardless (pre-existing, deferred to Task 6) -- but that's
-    /// moot for this hand-off specifically, since the leaf closed here
-    /// was `tab`'s only remaining leaf, so there is nothing left for a
-    /// per-tab check to catch.
+    /// That hand-off is asked FIRST, against a throwaway `remove(leafID)`
+    /// result, before anything is actually destroyed. Ordering matters:
+    /// `closeTab(id:)`'s quit-confirmation gate is cancellable, and the
+    /// earlier arrangement (destroy the pane, empty `splitTree`, *then*
+    /// call `closeTab`) left a cancelled prompt with the tab still open
+    /// and its last pane already gone -- precisely the zombie state this
+    /// whole mechanism exists to prevent. It also double-prompted about
+    /// unsent review comments: once here for the single pane, then again
+    /// inside `closeTab(id:)` for the same pane tab-wide. Both are the
+    /// hand-off branch's problem only; the ordinary "tab keeps living"
+    /// path below is unchanged.
+    ///
+    /// The unsent-review-comment check below covers the leaf being closed
+    /// here on that ordinary path. On the hand-off path `closeTab(id:)`
+    /// runs its own tab-wide check (Task 6 fixed it to be keyed by leaf,
+    /// so it does cover this leaf), which is why this one is skipped there.
     ///
     /// `gitChangesController.closeDiffPane(leafID)` only removes the
     /// leaf from the ACTIVE tab's `paneContent` (see that method's own
@@ -2416,6 +2424,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// not redundant: it is what actually cleans up `paneContent` when
     /// `tab` here is not the active tab.
     private func closePane(tab: Tab, group: TabGroup, leafID: UUID) {
+        // Nothing has been destroyed yet at this point -- see the ordering
+        // paragraph above.
+        if tab.splitTree.remove(leafID).tree.isEmpty {
+            closeTab(id: tab.id)
+            return
+        }
+
         if let store = gitChangesController.reviewStore(for: leafID), store.hasUnsubmittedComments {
             let alert = unsentCommentsAlert(commentCount: store.comments.count)
             guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -2425,11 +2440,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         tab.paneContent.removeValue(forKey: leafID)
         let (newTree, focusTarget) = tab.splitTree.remove(leafID)
         tab.splitTree = newTree
-
-        if tab.splitTree.isEmpty {
-            closeTab(id: tab.id)
-            return
-        }
 
         if tab.id == activeTab?.id {
             splitContainerView?.updateLayout(tree: tab.splitTree)
@@ -2900,7 +2910,16 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         default: focusDir = .next
         }
 
-        guard let targetID = tab.splitTree.focusTarget(for: focusDir, from: surfaceID) else { return }
+        // Terminal leaves only. `tab.paneContent`'s keys are the tab's
+        // git-changes/diff pane leaves; they have no ghostty surface, so
+        // pointing `focusedLeafID` at one strands AppKit first responder --
+        // `makeFirstResponder` below is skipped (no registered view), the
+        // terminal never gets it back, and keystrokes go nowhere until the
+        // user clicks. Same "pane leaves are not focus candidates" filter
+        // `sendReviewToAgent` applies to its target list.
+        guard let targetID = tab.splitTree.focusTarget(
+            for: focusDir, from: surfaceID, excluding: Set(tab.paneContent.keys)
+        ) else { return }
         tab.splitTree.focusedLeafID = targetID
 
         if let targetView = tab.registry.view(for: targetID) {
@@ -3699,7 +3718,22 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// leaf that should hold focus in both directions, so one restore
     /// covers open and close alike (a no-op on open, where the terminal
     /// already has it).
+    ///
+    /// The leading `closingChangesPanelWouldEmptyTree()` check is the toggle
+    /// route's half of the zombie-tab fix `closePane` already carries: a tab
+    /// whose only terminal has exited survives on its still-open changes panel
+    /// alone, so closing that panel removes its last `splitTree` leaf and
+    /// leaves a tab rendering nothing. `GitChangesController` does not close
+    /// tabs, so the handoff to `closeTab(id:)` lives here. Deliberately asked
+    /// BEFORE calling `toggleChangesPanel()`: `closeTab(id:)` gates on
+    /// `confirmQuitBeforeCloseIfWouldTerminate()`, and cancelling that prompt
+    /// must leave the panel open rather than already-removed from a tab that
+    /// is still around.
     private func toggleGitChangesPanel() {
+        if let tab = activeTab, gitChangesController.closingChangesPanelWouldEmptyTree() {
+            closeTab(id: tab.id)
+            return
+        }
         gitChangesController.toggleChangesPanel()
         guard let tab = activeTab,
               let focusID = tab.splitTree.focusedLeafID,
@@ -3837,9 +3871,14 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// Returns true if a terminal tab title indicates it is running one of the
     /// supported AI agents (Claude Code, Codex, OpenCode, Hermes). Centralizes
     /// the title-substring check used by the compose-overlay send path
-    /// (`sendComposeText`) to decide paste timing (double- vs single-Enter).
-    /// NOT used by `sendReviewToAgent` -- review submission always targets a
-    /// terminal leaf in the active tab regardless of its title (see below).
+    /// (`sendComposeText`) to decide paste timing (double- vs single-Enter),
+    /// and by `sendReviewToAgent` -- via
+    /// `reviewSendNeedsAgentConfirmation(title:)` -- to decide whether to ask
+    /// first. Note the two uses are different in kind: for `sendComposeText`
+    /// this selects *timing*, never whether to send; for review submission it
+    /// gates a soft confirmation only. Neither is target *selection* -- review
+    /// submission still always targets a terminal leaf of the active tab and
+    /// never scans other tabs by title.
     /// Keep the agent list in sync with `IPCConfigResult` axes.
     private static func isAIAgentTitle(_ title: String) -> Bool {
         title.localizedCaseInsensitiveContains("claude") ||
@@ -3848,11 +3887,43 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         title.localizedCaseInsensitiveContains("hermes")
     }
 
+    /// Whether `sendReviewToAgent` should show its "this doesn't look like an
+    /// AI agent" confirmation before pasting a review payload.
+    ///
+    /// Why this exists: the old cross-tab title-*scanning* mechanism was
+    /// (correctly) deleted, but it incidentally also carried the only guard
+    /// against pasting a multi-line review prompt plus two Enters into a
+    /// plain shell. Same-tab targeting stays exactly as it is; this only adds
+    /// a dismissible "send anyway?" step.
+    ///
+    /// Split out as a pure function because `NSAlert.runModal()` cannot run
+    /// under XCTest -- this is the seam the tests exercise, mirroring how the
+    /// unsent-review-comment alert paths are tested by asserting their
+    /// predicate rather than driving the modal.
+    static func reviewSendNeedsAgentConfirmation(title: String) -> Bool {
+        !isAIAgentTitle(title)
+    }
+
     /// Sends a review payload to a terminal pane in the *active tab* --
     /// never a cross-tab/cross-group search. Diff panes and the terminal
     /// they're reviewing always live together as leaves in the same tab's
     /// `splitTree` (Task 4), so the only ambiguity left is which terminal
     /// leaf to target when the tab has more than one.
+    ///
+    /// Targeting is title-blind, but the SEND is not: when the tab's title
+    /// doesn't look like an AI agent
+    /// (`reviewSendNeedsAgentConfirmation(title:)`) the user is asked to
+    /// confirm, since the payload is a multi-line review prompt followed by
+    /// two Enters and a plain shell would try to execute it. Cancelling
+    /// returns `.cancelled`, the same result the multi-terminal picker's
+    /// Cancel button produces.
+    ///
+    /// Known limitation: `Tab.title` tracks the tab's *focused* surface (see
+    /// `handleSetTitleNotification`) and there is no per-leaf title in this
+    /// codebase (`SurfaceView.title` is never assigned), so on a multi-terminal
+    /// tab the check reads the focused pane's title rather than the picked
+    /// one's. Acceptable for a soft confirmation: the cost of a wrong read is
+    /// one dismissible dialog in either direction.
     private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
         guard let tab = activeTab else { return .failed }
         let terminalLeaves = tab.splitTree.allLeafIDs().filter { tab.paneContent[$0] == nil }
@@ -3887,6 +3958,16 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         guard let controller = tab.registry.controller(for: targetLeafID) else {
             showIPCAlert(title: "Send Failed", message: "Could not access terminal surface.")
             return .failed
+        }
+
+        if Self.reviewSendNeedsAgentConfirmation(title: tab.title) {
+            let alert = NSAlert()
+            alert.messageText = "Not an AI Agent?"
+            alert.informativeText = "\"\(tab.title)\" doesn't look like an AI agent. The review will be pasted and submitted with Enter. Send anyway?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Send Anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
         }
 
         controller.sendText(payload)
