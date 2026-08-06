@@ -237,6 +237,15 @@ schemes:
         # DebugUITesting) exists to prevent. Use the CalixUITests scheme
         # directly for UI tests.
         - CalixTests
+      # CalixTests exercises requestSave()/SessionPersistenceActor through
+      # many code paths (closeTab, closeGroup, attachRestoredTab, splits,
+      # ...). Without this, those tests write straight to the real
+      # ~/.calix/sessions.json -- the same file the user's live Calix app
+      # restores from on launch -- and can silently wipe a real session.
+      # $(TMPDIR) is an Xcode-resolved per-run temp dir, so every test
+      # invocation gets its own throwaway location.
+      environmentVariables:
+        CALIX_UITEST_SESSION_DIR: $(TMPDIR)/CalixTests-sessions
   CalixTests:
     build:
       targets:
@@ -246,6 +255,9 @@ schemes:
       config: Debug
       targets:
         - CalixTests
+      # Same isolation rationale as the Calix scheme's test action above.
+      environmentVariables:
+        CALIX_UITEST_SESSION_DIR: $(TMPDIR)/CalixTests-sessions
   CalixUITests:
     build:
       targets:
