@@ -23,7 +23,8 @@ migrated — see spec at `docs/superpowers/specs/2026-08-05-tab-scoped-git-chang
 - Every task must leave the app building (`xcodebuild -project Calix.xcodeproj -scheme Calix -configuration Debug build`) and `CalixTests` green before commit.
 - No task may leave both the old (window-level / sibling-tab) and new (per-tab / pane) mechanisms half-wired at the same time once a task claims to "cut over" a piece — either it's fully moved, or deferred whole to a later task.
 - Follow existing test conventions exactly: `GitChangesController`/model tests use Swift Testing (`import Testing`, `@Test`, `#expect`, `Issue.record`) in `CalixTests/Git/DiffTabLifecycleTests.swift`, matching its existing scratch-git-repo fixture helpers (`makeScratchDirectory`, `runGit`, `waitForDiffState`).
-- `diffOriginTabIDs`, `agentTabCandidates`, `sendReviewToAgent(_:preferredTabID:)`, and `submitDiffReview_targetsOriginTab_notGlobalScan` (all added earlier this session, currently uncommitted) are dead code under this plan — Task 7 and Task 12 delete them. Do not try to preserve or extend them.
+- **Baseline correction:** this plan's line numbers/code were captured from a mid-session working state that included an interim fix (`diffOriginTabIDs`, `agentTabCandidates`, `sendReviewToAgent(_:preferredTabID:)`, `submitDiffReview_targetsOriginTab_notGlobalScan`). That fix was never committed, so it is **absent** from this worktree's actual baseline (a fresh worktree only ever contains committed history) — `sendReviewToAgent(_ payload: String) -> ReviewSendResult` in this worktree still has its ORIGINAL inline cross-group title-scanning logic (no `preferredTabID` parameter, no separate `agentTabCandidates` function, `GitChangesController.swift` has no `diffOriginTabIDs` property). Task 4 and Task 7 build the new tab-scoped design directly from this original code — there is nothing from an interim fix to delete first. Where a task's text says "delete X" and X doesn't exist in this worktree, treat it as "X is not present, skip that removal and implement the target state directly."
+- **This project uses `xcodegen`**: `Calix.xcodeproj` is generated from `project.yml` and is gitignored — it does not exist in a fresh checkout/worktree. Run `xcodegen generate` once before the first build in a new worktree, and again any time a `.swift` file is added or removed (this project's `CalixTests`/`Calix` targets use directory-glob `sources:` in `project.yml`, not individually-listed files, so a new file just needs `xcodegen generate` re-run — no manual `project.pbxproj` editing is needed, unlike what an isolated look at the `.pbxproj` format might suggest).
 
 ---
 
@@ -252,13 +253,12 @@ purely additive — it cannot regress existing terminal-only tabs, since
 `resolvePaneContent` falls back to `.surface` whenever `paneContent[leafID]`
 is nil, which is every leaf that exists today.
 
-**Note on new test file registration:** this project has no `Package.swift`
-(plain `Calix.xcodeproj`) and no `PBXFileSystemSynchronizedRootGroup` — a new
-test file must be registered in `project.pbxproj` (`PBXBuildFile`,
-`PBXFileReference`, group listing, `PBXSourcesBuildPhase`), same as any file
-added via Xcode's "New File" (Add to target: CalixTests). Do this via Xcode
-or `xcodeproj`-editing tooling before running the test; a file dropped on
-disk without these entries silently won't compile/run.
+**Note on new test file registration:** this project uses `xcodegen`
+(`project.yml` → generated, gitignored `Calix.xcodeproj`), with `CalixTests`'
+sources declared as a directory glob (`path: CalixTests`) rather than an
+individually-listed file list. A new file just needs `xcodegen generate`
+re-run from the repo root before building/testing — no manual
+`project.pbxproj` editing required.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1072,11 +1072,7 @@ production code. Run it to confirm: `xcodebuild test -project Calix.xcodeproj -s
 
 - [ ] **Step 3: Delete cross-tab machinery, rewrite `sendReviewToAgent`**
 
-In `CalixWindowController.swift`, delete entirely:
-- `agentTabCandidates(preferredGroup:allGroups:)` (lines 3647-3656)
-- `isAIAgentTitle(_:)` (lines 3634-3639) — no longer needed; a terminal leaf in the same tab is always the target regardless of its title.
-
-Replace `sendReviewToAgent(_:preferredTabID:)` (lines 3658-3708) with:
+In `CalixWindowController.swift`, find `private func sendReviewToAgent(_ payload: String) -> ReviewSendResult` — its body scans `windowSession.groups.flatMap(\.tabs)` for terminal tabs whose title matches a static `isAIAgentTitle(_:)` helper (checking for "claude"/codex/openCode/"hermes" substrings), picking one automatically if there's exactly one match or showing an `NSAlert`+`NSPopUpButton` picker if there are several. Delete `isAIAgentTitle(_:)` entirely — no longer needed, since a terminal leaf in the same tab is always the target regardless of its title — and replace `sendReviewToAgent`'s whole body with:
 
 ```swift
     private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
@@ -1173,16 +1169,14 @@ means all diff panes in the *current* tab" behavior from the spec; without
 it, stale `reviewStores` entries from panes in tabs the user has since
 switched away from would leak into "all."
 
-- [ ] **Step 4: Delete now-dead test coverage, update callers**
-
-Delete `submitDiffReview_targetsOriginTab_notGlobalScan`,
-`agentTabCandidates_multipleGroups_prefersAgentTabInPreferredGroup`, and
-`agentTabCandidates_noAgentTabInPreferredGroup_fallsBackToOtherGroups` from
-`DiffTabLifecycleTests.swift` — all three test deleted production code.
+- [ ] **Step 4: Update callers**
 
 Update every caller of `submitDiffReview(tabID:)` to pass a leaf ID instead
 (the pane's own ID, already threaded through from `DiffPaneView`'s toolbar
-callback in Task 3/5).
+callback in Task 3/5). (No test deletion needed here — this worktree's
+`DiffTabLifecycleTests.swift` never had tests for the interim
+`diffOriginTabIDs`/`agentTabCandidates` fix in the first place, per the
+Global Constraints baseline-correction note.)
 
 - [ ] **Step 5: Run tests to verify they pass**
 
