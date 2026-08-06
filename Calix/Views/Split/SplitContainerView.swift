@@ -352,7 +352,6 @@ class SplitContainerView: NSView {
                 controller: gitChangesController,
                 reduceTransparency: reduceTransparency,
                 glassOpacity: glassOpacity,
-                themeColor: themeColor,
                 onSubmitReview: { [weak self] in self?.onSubmitReview?(leafID) },
                 onDiscardReview: { [weak self] in self?.onDiscardReview?(leafID) },
                 onSubmitAllReviews: onSubmitAllReviews,

@@ -316,7 +316,10 @@ final class GitChangesController {
             stopMonitoring(cancelRefresh: false)
         } else {
             guard let anchorLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first else { return }
-            let (newTree, newLeafID) = tab.splitTree.insert(at: anchorLeafID, direction: .horizontal)
+            // `ratio` is the fraction given to `first` (the existing/anchor
+            // leaf); giving it 4/5 leaves the new changes-panel leaf
+            // (`second`) about 1/5 of the split's width.
+            let (newTree, newLeafID) = tab.splitTree.insert(at: anchorLeafID, direction: .horizontal, ratio: 4.0 / 5.0)
             tab.splitTree = newTree
             // Same reasoning as `openDiffTab` below: `insert` focuses the
             // leaf it just created, but a `.gitChanges` pane has no ghostty
@@ -382,8 +385,7 @@ final class GitChangesController {
             return
         }
 
-        // The leaf the diff pane is being inserted next to -- almost always
-        // the terminal leaf the user was focused on. Restored below so
+        // The terminal leaf the user was focused on. Restored below so
         // keyboard focus stays on the terminal: `focusedLeafID` is read as
         // "the leaf with keyboard focus" by `focusActiveTabImmediately`/
         // `attemptFocusRestore` (CalixWindowController) and surfaced over
@@ -392,10 +394,22 @@ final class GitChangesController {
         // otherwise does) makes all three readers wrong until the user
         // manually clicks the terminal.
         let insertionLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first ?? UUID()
-        let (newTree, newLeafID) = tab.splitTree.insert(
-            at: insertionLeafID,
-            direction: .horizontal
-        )
+
+        // First diff for this tab opens as a new full-width row below the
+        // terminal/changes-panel row (`insertAtRoot`, wrapping the whole
+        // existing tree rather than one leaf). Once a diff row exists,
+        // further diffs split that row into additional columns alongside it.
+        let existingDiffLeafID = tab.paneContent.first {
+            if case .diff = $0.value { return true }
+            return false
+        }?.key
+        let newTree: SplitTree
+        let newLeafID: UUID
+        if let existingDiffLeafID, tab.splitTree.allLeafIDs().contains(existingDiffLeafID) {
+            (newTree, newLeafID) = tab.splitTree.insert(at: existingDiffLeafID, direction: .horizontal)
+        } else {
+            (newTree, newLeafID) = tab.splitTree.insertAtRoot(direction: .vertical)
+        }
         tab.splitTree = newTree
         if tab.splitTree.allLeafIDs().contains(insertionLeafID) {
             // Normal case: the terminal leaf we split against still exists

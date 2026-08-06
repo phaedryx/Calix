@@ -15,7 +15,6 @@ struct DiffPaneView: View {
     let controller: GitChangesController
     let reduceTransparency: Bool
     let glassOpacity: Double
-    let themeColor: NSColor
     var onSubmitReview: (() -> Void)?
     var onDiscardReview: (() -> Void)?
     var onSubmitAllReviews: (() -> Void)?
@@ -64,7 +63,16 @@ struct DiffPaneView: View {
                 }
             }
         }
-        .glassEffect(.clear.tint(Color(nsColor: GlassTheme.chromeTint(for: themeColor, glassOpacity: glassOpacity))), in: .rect)
+        // Same reasoning as `GitChangesPaneView`'s leading-edge overlay: the
+        // shared `SplitDividerView` between this pane and whatever sits
+        // above it is a nearly-invisible 1pt hairline, so add a slightly
+        // more visible edge of our own on the side that borders the
+        // terminal/changes-panel row.
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.18))
+                .frame(height: 1)
+        }
         .accessibilityIdentifier(AccessibilityID.Diff.container)
     }
 }

@@ -29,5 +29,14 @@ struct GitChangesPaneView: View {
             onRefresh: onRefresh,
             onClose: onClose
         )
+        // The shared `SplitDividerView` between this pane and its neighbor
+        // is a nearly-invisible 1pt hairline (0.5-opacity glass tint) --
+        // add a slightly more visible edge of our own so the panel's
+        // boundary reads clearly against the terminal next to it.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 1)
+        }
     }
 }
