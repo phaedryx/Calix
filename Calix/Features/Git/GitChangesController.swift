@@ -70,9 +70,14 @@ final class GitChangesController {
     // below) for every user with the sidebar open in the default Tabs
     // mode, a behavior change with no corresponding UI to justify it
     // (and it caused background monitor tasks to start during plain
-    // WindowSession-constructing unit tests when tried). Task 10
-    // retargets this to key off `activeTab.paneContent` containing a
-    // `.gitChanges` entry instead.
+    // WindowSession-constructing unit tests when tried). This also gates
+    // four automatic refreshStatus() call sites in CalixWindowController
+    // (tab activation, toggleSidebar, pwd change, setSidebarMode), so
+    // whoever wires up the new per-tab panel in Task 9 needs a real
+    // implementation here -- not just monitoring -- or the panel will be
+    // stuck on .notLoaded with no data on first activation and no
+    // refresh on `cd`. Task 10 retargets this to key off
+    // `activeTab.paneContent` containing a `.gitChanges` entry instead.
     var isSidebarVisible: Bool {
         false
     }
