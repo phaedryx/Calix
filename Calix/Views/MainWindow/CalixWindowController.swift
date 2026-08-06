@@ -1566,6 +1566,23 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         createBrowserTab(url: url)
     }
 
+    /// Shared by `closeTab` (aggregating across every diff pane in the
+    /// closing tab) and `closePane` (a single diff pane) -- `fileCount`
+    /// is nil for the single-pane case, where "file(s)" would be
+    /// redundant with "This diff".
+    private func unsentCommentsAlert(commentCount: Int, fileCount: Int? = nil) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = "Unsent Review Comments"
+        if let fileCount {
+            alert.informativeText = "This tab has \(commentCount) unsent review comment(s) across \(fileCount) file(s). Closing will discard them."
+        } else {
+            alert.informativeText = "This diff has \(commentCount) unsent review comment(s). Closing will discard them."
+        }
+        alert.addButton(withTitle: "Discard & Close")
+        alert.addButton(withTitle: "Cancel")
+        return alert
+    }
+
     private func closeTab(id tabID: UUID) {
         // Prevent double execution
         guard !closingTabIDs.contains(tabID) else { return }
@@ -1586,13 +1603,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
         }
 
-        // Check for unsent review comments
-        if let store = gitChangesController.reviewStore(for: tabID), store.hasUnsubmittedComments {
-            let alert = NSAlert()
-            alert.messageText = "Unsent Review Comments"
-            alert.informativeText = "This diff tab has \(store.comments.count) unsent review comment(s). Closing will discard them."
-            alert.addButton(withTitle: "Discard & Close")
-            alert.addButton(withTitle: "Cancel")
+        // Check for unsent review comments across every diff pane in this tab
+        let diffLeavesWithComments = tab.paneContent.keys.filter { leafID in
+            gitChangesController.reviewStore(for: leafID)?.hasUnsubmittedComments ?? false
+        }
+        if !diffLeavesWithComments.isEmpty {
+            let totalComments = diffLeavesWithComments.reduce(0) { $0 + (gitChangesController.reviewStore(for: $1)?.comments.count ?? 0) }
+            let alert = unsentCommentsAlert(commentCount: totalComments, fileCount: diffLeavesWithComments.count)
             let response = alert.runModal()
             if response != .alertFirstButtonReturn {
                 closingTabIDs.remove(tabID)
@@ -2374,11 +2391,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// `tab` here is not the active tab.
     private func closePane(tab: Tab, group: TabGroup, leafID: UUID) {
         if let store = gitChangesController.reviewStore(for: leafID), store.hasUnsubmittedComments {
-            let alert = NSAlert()
-            alert.messageText = "Unsent Review Comments"
-            alert.informativeText = "This diff has \(store.comments.count) unsent review comment(s). Closing will discard them."
-            alert.addButton(withTitle: "Discard & Close")
-            alert.addButton(withTitle: "Cancel")
+            let alert = unsentCommentsAlert(commentCount: store.comments.count)
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
 

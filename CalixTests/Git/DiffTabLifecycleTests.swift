@@ -105,6 +105,81 @@ struct DiffTabLifecycleTests {
         #expect(controller.reviewStore(for: leafID) == nil)
     }
 
+    // Task 6: `closeTab`'s pre-close "Unsent Review Comments" check used
+    // to call `gitChangesController.reviewStore(for: tabID)` -- a TAB id
+    // against the leaf-keyed `reviewStores` dictionary, which is always
+    // nil now that diff panes are `paneContent` leaves (Task 4), so the
+    // warning silently stopped firing. Drives two REAL diff panes through
+    // `handleWorkingFileSelected` (as `openDiffTab` would create them,
+    // with genuine `reviewStores` entries) rather than synthetic
+    // stand-in stores, so this actually exercises the same
+    // `tab.paneContent.keys.filter { gitChangesController.reviewStore(for:) }`
+    // predicate `closeTab` runs -- it goes red if that call reverts to
+    // being keyed by `tabID` instead of by leaf.
+    @Test func closeTab_warningCoversAllDiffPanesInTab() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try "two\n".write(to: scratchDirectory.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try "two-changed\n".write(to: scratchDirectory.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+
+        let tab = Tab(pwd: scratchDirectory.path)
+        let session = WindowSession(initialTab: tab)
+        let group = session.activeGroup!
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { id in group.activeTabID = id },
+            deactivateCurrentTab: {}, sendToAgent: { _ in .sent }
+        )
+
+        controller.refreshStatus()
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = tab.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let entryOne = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        let entryTwo = GitFileEntry(path: "two.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        let leavesBeforeFirst = Set(tab.splitTree.allLeafIDs())
+        controller.handleWorkingFileSelected(entryOne)
+        guard let leafOne = tab.splitTree.allLeafIDs().first(where: { !leavesBeforeFirst.contains($0) }) else {
+            Issue.record("Expected first diff leaf to be created")
+            return
+        }
+        let leavesBeforeSecond = Set(tab.splitTree.allLeafIDs())
+        controller.handleWorkingFileSelected(entryTwo)
+        guard let leafTwo = tab.splitTree.allLeafIDs().first(where: { !leavesBeforeSecond.contains($0) }) else {
+            Issue.record("Expected second diff leaf to be created")
+            return
+        }
+
+        // Only leafOne gets a comment -- reviewStores are created
+        // synchronously by `openDiffTab` (before the async diff-fetch
+        // task), so this is non-nil immediately, no need to wait for
+        // `diffState`.
+        controller.reviewStore(for: leafOne)?.addComment(
+            lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "x")
+
+        // This is the exact predicate `closeTab` runs.
+        let diffLeavesWithComments = tab.paneContent.keys.filter { leafID in
+            controller.reviewStore(for: leafID)?.hasUnsubmittedComments ?? false
+        }
+        #expect(diffLeavesWithComments == [leafOne])
+        #expect(!diffLeavesWithComments.contains(leafTwo))
+
+        let totalComments = diffLeavesWithComments.reduce(0) { $0 + (controller.reviewStore(for: $1)?.comments.count ?? 0) }
+        #expect(totalComments == 1)
+    }
+
     // Carried-forward fix (Task 5 review item 1): `closeTab`/
     // `closeActiveGroup`/`closeAllTabsInGroup` used to call
     // `gitChangesController.closeDiffTab(tabID)` -- a call keyed by the
