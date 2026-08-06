@@ -20,6 +20,8 @@ struct DiffPaneView: View {
     var onDiscardReview: (() -> Void)?
     var onSubmitAllReviews: (() -> Void)?
     var onDiscardAllReviews: (() -> Void)?
+    /// Closes this one pane (Task 5), leaving the rest of the tab intact.
+    var onClose: (() -> Void)?
 
     var body: some View {
         let reviewStore = controller.reviewStore(for: leafID)
@@ -32,7 +34,8 @@ struct DiffPaneView: View {
                 totalReviewCommentCount: controller.totalReviewCommentCount,
                 reviewFileCount: controller.reviewFileCount,
                 onSubmitAllReviews: onSubmitAllReviews,
-                onDiscardAllReviews: onDiscardAllReviews
+                onDiscardAllReviews: onDiscardAllReviews,
+                onClose: onClose
             )
             switch controller.diffState(for: leafID) {
             case .none, .loading:

@@ -48,6 +48,11 @@ struct DiffToolbarView: View {
     var reviewFileCount: Int = 0
     var onSubmitAllReviews: (() -> Void)?
     var onDiscardAllReviews: (() -> Void)?
+    /// Task 5 per-pane close button. `nil` (the default) for
+    /// `DiffContainerView`'s legacy whole-tab-diff render path, which
+    /// has no single leaf to close -- only `DiffPaneView` (a
+    /// `SplitContainerView` leaf) passes this.
+    var onClose: (() -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -130,6 +135,15 @@ struct DiffToolbarView: View {
                     .foregroundStyle(.red)
                     .accessibilityIdentifier(AccessibilityID.DiffReview.discardAllButton)
                 }
+            }
+
+            if let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.body)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier(AccessibilityID.Diff.closeButton)
             }
         }
         .padding(.horizontal, 12)

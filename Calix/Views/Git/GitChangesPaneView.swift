@@ -15,6 +15,8 @@ struct GitChangesPaneView: View {
     var onWorkingFileSelected: ((GitFileEntry) -> Void)?
     var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
     var onRefresh: (() -> Void)?
+    /// Closes this one pane (Task 5), leaving the rest of the tab intact.
+    var onClose: (() -> Void)?
 
     var body: some View {
         GitChangesView(
@@ -24,7 +26,8 @@ struct GitChangesPaneView: View {
             branchDeltaEntries: tab.branchDeltaEntries,
             onWorkingFileSelected: onWorkingFileSelected,
             onBranchDeltaFileSelected: onBranchDeltaFileSelected,
-            onRefresh: onRefresh
+            onRefresh: onRefresh,
+            onClose: onClose
         )
     }
 }

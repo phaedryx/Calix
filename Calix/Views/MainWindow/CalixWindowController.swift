@@ -1157,6 +1157,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
             container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
             container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }
+            container.onClosePane = { [weak self] leafID in
+                guard let self else { return }
+                guard let group = self.windowSession.groups.first(where: { g in
+                    g.tabs.contains(where: { $0.paneContent[leafID] != nil })
+                }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
+                self.closePane(tab: tab, group: group, leafID: leafID)
+            }
             self.splitContainerView = container
         }
     }
@@ -1596,8 +1603,15 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         // Clean up browser controller if present
         browserControllers.removeValue(forKey: tabID)
 
-        // Clean up diff state
-        gitChangesController.closeDiffTab(tabID)
+        // Clean up every diff/changes pane this tab holds -- diff panes
+        // are `paneContent` leaves inside the tab's own `splitTree` now
+        // (Task 4), not sibling tabs, so there is no single "this tab's
+        // diff tab" to close; every leaf must be visited. Snapshotted
+        // via Array(...) since `closeDiffPane` mutates `tab.paneContent`
+        // when `tab` is the active tab.
+        for leafID in Array(tab.paneContent.keys) {
+            gitChangesController.closeDiffPane(leafID)
+        }
 
         // Destroy all surfaces in the tab, killing any persistent
         // session each was attached to (R8-F, tearDownSurfaces): an
@@ -1717,9 +1731,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         for tabID in tabIDs {
             browserControllers.removeValue(forKey: tabID)
         }
-        // Clean up diff states for all tabs in this group
-        for tabID in tabIDs {
-            gitChangesController.closeDiffTab(tabID)
+        // Clean up every diff/changes pane in every tab of this group --
+        // see closeTab(id:)'s equivalent comment on why this is now a
+        // per-leaf loop rather than one closeDiffTab(tabID) call.
+        for tab in group.tabs {
+            for leafID in Array(tab.paneContent.keys) {
+                gitChangesController.closeDiffPane(leafID)
+            }
         }
 
         // Destroy all surfaces in all tabs of this group (killing any
@@ -1775,9 +1793,14 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             deactivateCurrentTab()
         }
 
-        for tabID in tabIDs {
-            browserControllers.removeValue(forKey: tabID)
-            gitChangesController.closeDiffTab(tabID)
+        // See closeTab(id:)'s equivalent comment: every diff/changes
+        // pane leaf in every tab of this group must be visited
+        // individually now, not one closeDiffTab(tabID) call per tab.
+        for tab in group.tabs {
+            browserControllers.removeValue(forKey: tab.id)
+            for leafID in Array(tab.paneContent.keys) {
+                gitChangesController.closeDiffPane(leafID)
+            }
         }
 
         for tab in group.tabs {
@@ -2304,6 +2327,48 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
             requestSave()
         }
+    }
+
+    /// Closes ONE changes-list/diff pane (a `paneContent` leaf) without
+    /// touching the rest of `tab` -- the non-terminal counterpart to
+    /// `closeSurfaceAndCleanUp`'s single-surface close. Unlike that
+    /// method, a pane leaf going away can never empty `tab.splitTree`
+    /// down to nothing on its own in the live app (a pane is only ever
+    /// inserted alongside an existing terminal leaf), so there is no
+    /// "did that leave the tab empty" branch here to mirror -- and
+    /// deliberately no attempt to add one: routing a pane's close
+    /// button through the same window-closing path as
+    /// `closeSurfaceAndCleanUp` would skip
+    /// `confirmQuitBeforeCloseIfWouldTerminate()` entirely. In the one
+    /// edge case where a tab's last terminal surface already exited
+    /// while a diff pane was still open (see `closeSurfaceAndCleanUp`'s
+    /// own doc comment), closing that last remaining pane here leaves a
+    /// leafless-but-still-open tab -- the same "empty" state a plain
+    /// `Cmd+W`/`closeTab(id:)` already handles correctly.
+    ///
+    /// `gitChangesController.closeDiffPane(leafID)` only removes the
+    /// leaf from the ACTIVE tab's `paneContent` (see that method's own
+    /// doc comment), so `tab.paneContent.removeValue(forKey:)` below is
+    /// not redundant: it is what actually cleans up `paneContent` when
+    /// `tab` here is not the active tab.
+    private func closePane(tab: Tab, group: TabGroup, leafID: UUID) {
+        if let store = gitChangesController.reviewStore(for: leafID), store.hasUnsubmittedComments {
+            let alert = NSAlert()
+            alert.messageText = "Unsent Review Comments"
+            alert.informativeText = "This diff has \(store.comments.count) unsent review comment(s). Closing will discard them."
+            alert.addButton(withTitle: "Discard & Close")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+
+        gitChangesController.closeDiffPane(leafID)
+        tab.paneContent.removeValue(forKey: leafID)
+        tab.splitTree = tab.splitTree.remove(leafID).tree
+        if tab.id == activeTab?.id {
+            splitContainerView?.updateLayout(tree: tab.splitTree)
+        }
+        refreshHostingView()
+        requestSave()
     }
 
     // MARK: - Session Reconnect

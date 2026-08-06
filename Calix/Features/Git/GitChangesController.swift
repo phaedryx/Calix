@@ -303,11 +303,25 @@ final class GitChangesController {
         }
     }
 
-    func closeDiffTab(_ tabID: UUID) {
-        diffTasks[tabID]?.cancel()
-        diffTasks.removeValue(forKey: tabID)
-        diffStates.removeValue(forKey: tabID)
-        reviewStores.removeValue(forKey: tabID)
+    /// Removes a diff/changes pane's controller-owned state (task,
+    /// load-state, review store) for `leafID`, and drops it from the
+    /// ACTIVE tab's `paneContent` if it's there. Callers closing a pane
+    /// belonging to a tab that may not be the active one (e.g. a whole
+    /// background tab/group closing) must additionally remove it from
+    /// that tab's own `paneContent` themselves -- see
+    /// `CalixWindowController.closePane`/`closeTab`/`closeActiveGroup`/
+    /// `closeAllTabsInGroup`. Unsent-review-comment confirmation stays
+    /// the caller's job, same as today's `closeTab` -- Task 6
+    /// generalizes that check for whole-tab close; per-pane close in
+    /// `CalixWindowController` gets its own equivalent single-pane check.
+    func closeDiffPane(_ leafID: UUID) {
+        diffTasks[leafID]?.cancel()
+        diffTasks.removeValue(forKey: leafID)
+        diffStates.removeValue(forKey: leafID)
+        reviewStores.removeValue(forKey: leafID)
+        if let tab = windowSession.activeGroup?.activeTab {
+            tab.paneContent.removeValue(forKey: leafID)
+        }
     }
 
     private func findWorkDir() -> String? {

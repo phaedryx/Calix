@@ -3,6 +3,7 @@
 //
 // Tests for diff tab lifecycle: GitChangesState transitions, SidebarMode, DiffSource dedup.
 
+import AppKit
 import Foundation
 import Testing
 @testable import Calix
@@ -84,6 +85,53 @@ struct DiffTabLifecycleTests {
 
         let d = DiffSource.branchDelta(path: "foo.swift", base: "origin/main", workDir: "/repo")
         #expect(a != d)
+    }
+
+    @Test func closeDiffPane_removesLeafAndCleansUpState() {
+        let tab = Tab()
+        let leafID = UUID()
+        tab.splitTree = SplitTree(leafID: leafID)
+        tab.paneContent[leafID] = .diff(source: .unstaged(path: "one.txt", workDir: "/repo"))
+        let session = WindowSession(initialTab: tab)
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+        _ = controller.reviewStore(for: leafID) // no-op touch to confirm nil before close
+        controller.closeDiffPane(leafID)
+
+        #expect(tab.paneContent[leafID] == nil)
+        #expect(controller.reviewStore(for: leafID) == nil)
+    }
+
+    // Carried-forward fix (Task 5 review item 1): `closeTab`/
+    // `closeActiveGroup`/`closeAllTabsInGroup` used to call
+    // `gitChangesController.closeDiffTab(tabID)` -- a call keyed by the
+    // closing TAB's id, a leftover from before Task 4 moved diff panes
+    // into `paneContent` leaves. This proves the whole-tab close path
+    // now visits every diff-pane leaf the closing tab actually holds.
+    @Test func closeTab_cleansUpEveryDiffPaneLeafInTheClosingTab() {
+        let closingTab = Tab(title: "Closing")
+        let diffLeafID = UUID()
+        closingTab.splitTree = SplitTree(leafID: diffLeafID)
+        closingTab.paneContent[diffLeafID] = .diff(source: .unstaged(path: "one.txt", workDir: "/repo"))
+
+        let otherTab = Tab(title: "Other")
+        let group = TabGroup(name: "Default", tabs: [closingTab, otherTab], activeTabID: closingTab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+
+        controller.closeTab(nil)
+
+        #expect(!group.tabs.contains(where: { $0.id == closingTab.id }))
+        #expect(closingTab.paneContent[diffLeafID] == nil)
     }
 
     @Test func tabPaneContent_defaultsEmpty_andStoresPaneKinds() {

@@ -69,6 +69,10 @@ class SplitContainerView: NSView {
     var onDiscardReview: ((UUID) -> Void)?
     var onSubmitAllReviews: (() -> Void)?
     var onDiscardAllReviews: (() -> Void)?
+    /// Fired with a pane leaf's own ID when its close button is tapped
+    /// (Task 5). Wired by `CalixWindowController.rebuildSplitContainer()`
+    /// to `closePane(tab:group:leafID:)`.
+    var onClosePane: ((UUID) -> Void)?
     /// Held strongly, but `GitChangesController` never holds this view back
     /// (its own closures capture `CalixWindowController` weakly), so there
     /// is no retain cycle.
@@ -128,6 +132,17 @@ class SplitContainerView: NSView {
         guard let root = tree.root else {
             subviews.forEach { $0.removeFromSuperview() }
             scrollWrappers.removeAll()
+            // Same reap `removeOrphanedSurfaces()` does below for the
+            // non-empty-tree path (e.g. closing a tab's last pane leaf,
+            // Task 5) -- an empty tree never reaches that call, so
+            // without this a stale NSHostingView<EmptyView> lingers in
+            // the dict (already removed from the view hierarchy above,
+            // via the blanket `subviews.forEach` removal) and
+            // `refreshPaneContent()` keeps reassigning `rootView` on a
+            // detached view forever. Mirrors `updateRegistry(_:)`'s own
+            // identical reset above.
+            paneHostingViews.values.forEach { $0.removeFromSuperview() }
+            paneHostingViews.removeAll()
             dividerCache.removeAll()
             activeLeafID = nil
             applyActiveDimming()
@@ -322,7 +337,8 @@ class SplitContainerView: NSView {
                 tab: tab,
                 onWorkingFileSelected: onWorkingFileSelected,
                 onBranchDeltaFileSelected: onBranchDeltaFileSelected,
-                onRefresh: onRefreshGitChanges
+                onRefresh: onRefreshGitChanges,
+                onClose: { [weak self] in self?.onClosePane?(leafID) }
             ))
         case .diff(let source):
             // In the live app `rebuildSplitContainer()` always sets
@@ -340,7 +356,8 @@ class SplitContainerView: NSView {
                 onSubmitReview: { [weak self] in self?.onSubmitReview?(leafID) },
                 onDiscardReview: { [weak self] in self?.onDiscardReview?(leafID) },
                 onSubmitAllReviews: onSubmitAllReviews,
-                onDiscardAllReviews: onDiscardAllReviews
+                onDiscardAllReviews: onDiscardAllReviews,
+                onClose: { [weak self] in self?.onClosePane?(leafID) }
             ))
         }
     }
