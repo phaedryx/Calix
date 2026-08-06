@@ -1106,9 +1106,9 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     private func rebuildSplitContainer() {
         guard let tab = activeTab else { return }
         if let container = splitContainerView {
-            container.updateRegistry(tab.registry)
+            container.updateRegistry(tab.registry, tab: tab)
         } else {
-            let container = SplitContainerView(registry: tab.registry)
+            let container = SplitContainerView(registry: tab.registry, tab: tab)
             container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
                 self?.handleDividerDrag(
                     firstChildFirstLeafID: firstChildID,
@@ -1122,6 +1122,22 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 self?.activeTab?.splitTree.focusedLeafID = leafID
                 self?.requestSave()
             }
+            container.gitChangesController = gitChangesController
+            container.onWorkingFileSelected = { [weak self] entry in
+                self?.gitChangesController.handleWorkingFileSelected(entry)
+            }
+            container.onBranchDeltaFileSelected = { [weak self] entry in
+                self?.gitChangesController.handleBranchDeltaFileSelected(entry)
+            }
+            container.onRefreshGitChanges = { [weak self] in self?.gitChangesController.refreshStatus() }
+            container.onSubmitReview = { [weak self] leafID in
+                self?.gitChangesController.submitDiffReview(tabID: leafID)
+            }
+            container.onDiscardReview = { [weak self] leafID in
+                self?.gitChangesController.discardReview(tabID: leafID)
+            }
+            container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
+            container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }
             self.splitContainerView = container
         }
     }

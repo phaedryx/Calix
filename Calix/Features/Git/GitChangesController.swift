@@ -91,6 +91,13 @@ final class GitChangesController {
         reviewStores[tabID]
     }
 
+    /// Per-key diff load state, for callers that render a specific diff
+    /// rather than "the active tab's" one (`SplitContainerView`'s diff
+    /// panes, keyed by split-tree leaf ID).
+    func diffState(for id: UUID) -> DiffLoadState? {
+        diffStates[id]
+    }
+
     // MARK: - Sidebar / Monitoring
 
     func refreshStatus(showsLoadingState: Bool = true) {
