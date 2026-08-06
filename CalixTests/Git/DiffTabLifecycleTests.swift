@@ -66,6 +66,24 @@ struct DiffTabLifecycleTests {
         #expect(a != d)
     }
 
+    @Test func tabPaneContent_defaultsEmpty_andStoresPaneKinds() {
+        let tab = Tab()
+        #expect(tab.paneContent.isEmpty)
+
+        let leafID = UUID()
+        tab.paneContent[leafID] = .gitChanges
+        #expect(tab.paneContent[leafID] == .gitChanges)
+
+        let diffLeafID = UUID()
+        let source = DiffSource.unstaged(path: "one.txt", workDir: "/repo")
+        tab.paneContent[diffLeafID] = .diff(source: source)
+        guard case .diff(let storedSource) = tab.paneContent[diffLeafID] else {
+            Issue.record("Expected .diff pane kind")
+            return
+        }
+        #expect(storedSource == source)
+    }
+
     @Test func handleWorkingFileSelected_secondTab_loadsIndependentDiff() async throws {
         let scratchDirectory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratchDirectory) }

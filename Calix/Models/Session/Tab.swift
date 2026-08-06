@@ -11,6 +11,11 @@ enum TabContent: Sendable {
     case diff(source: DiffSource)
 }
 
+enum TabPaneKind: Equatable, Sendable {
+    case gitChanges
+    case diff(source: DiffSource)
+}
+
 @MainActor @Observable
 class Tab: Identifiable {
     let id: UUID
@@ -40,6 +45,10 @@ class Tab: Identifiable {
     /// `Tab.snapshot()` (as `nil` when empty) and restored back by
     /// `Tab.init(snapshot:)`.
     var sessionRefs: [UUID: SessionRef]
+    /// Non-terminal content for a `splitTree` leaf. A leaf present here
+    /// renders as a changes-list or diff pane; a leaf absent from it is a
+    /// terminal surface via `registry` (today's only case).
+    var paneContent: [UUID: TabPaneKind] = [:]
 
     init(
         id: UUID = UUID(),
