@@ -37,4 +37,13 @@ enum ClaudeTitleHeuristic {
         }
         return nil
     }
+
+    /// Removes a leading spinner glyph (and the whitespace after it) from
+    /// a pane title, for display in place of a dedicated working-state
+    /// dot. Returns `title` unchanged if it doesn't start with one.
+    static func stripLeadingSpinnerGlyph(from title: String) -> String {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first, spinnerGlyphs.contains(first) else { return title }
+        return trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+    }
 }

@@ -382,8 +382,12 @@ private struct TabItemButton: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
-        let visibleTitle = tab.titleOverride ?? tab.title
+        let isWorking = ClaudeTitleHeuristic.classify(title: tab.title) == .working
+        let visibleTitle = tab.titleOverride ?? ClaudeTitleHeuristic.stripLeadingSpinnerGlyph(from: tab.title)
         let closeIsActive = (isHovering || isActive) && !isEditing
+        let titleColor: Color = isWorking
+            ? .green
+            : (tab.unreadNotifications > 0 ? .yellow : (isActive ? .primary : .secondary))
 
         // AppKit-native click container. The hosting NSView owns the
         // SwiftUI tab content as a subview, so `mouseDown(with:)` fires
@@ -446,12 +450,8 @@ private struct TabItemButton: View {
                         .lineLimit(1)
                         .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
                         .tracking(0.18)
-                        .foregroundStyle(isActive ? .primary : .secondary)
+                        .foregroundStyle(titleColor)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                if tab.unreadNotifications > 0 {
-                    UnreadCountBadge(count: tab.unreadNotifications)
                 }
 
                 // Visual-only close icon. No `.onTapGesture`, no

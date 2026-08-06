@@ -1023,6 +1023,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             onNewGroup: { [weak self] in self?.createNewGroup() },
             onCloseTab: { [weak self] tabID in self?.closeTab(id: tabID) },
             onGroupRenamed: { [weak self] in self?.requestSave() },
+            onGroupColorChanged: { [weak self] in self?.requestSave() },
             onTabRenamed: { [weak self] in self?.requestSave() },
             onToggleSidebar: { [weak self] in self?.toggleSidebar() },
             onDismissCommandPalette: { [weak self] in self?.dismissCommandPalette() },

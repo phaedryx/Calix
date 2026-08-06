@@ -1,11 +1,11 @@
 // UnreadCountBadge.swift
 // Calix
 //
-// Shared unread-count badge used by AgentStatusView's row, and by
-// SidebarContentView / TabBarContentView for a tab's unread
-// notifications. A Capsule background (rather than a fixed-size Circle)
-// grows to fit "99+" instead of squashing it into an ellipse sized for a
-// single digit.
+// Unread-count badge used by AgentStatusView's row, where
+// `entry.unreadCount` is a genuine IPC-inbox depth that can exceed 1. A
+// Capsule background (rather than a fixed-size Circle) grows to fit
+// "99+" instead of squashing it into an ellipse sized for a single
+// digit.
 
 import SwiftUI
 

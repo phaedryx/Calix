@@ -143,9 +143,9 @@ private struct AgentRowView: View {
     private var dotColor: Color {
         switch entry.state {
         case .blocked: return .red
-        case .working: return .yellow
-        case .done:    return .blue
-        case .idle:    return .green
+        case .working: return .green
+        case .done:    return .yellow
+        case .idle:    return .secondary
         }
     }
 

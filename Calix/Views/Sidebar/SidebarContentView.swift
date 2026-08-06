@@ -16,6 +16,7 @@ struct SidebarContentView: View {
     var onNewGroup: (() -> Void)?
     var onCloseTab: ((UUID) -> Void)?
     var onGroupRenamed: (() -> Void)?
+    var onGroupColorChanged: (() -> Void)?
     var onTabRenamed: (() -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
@@ -50,7 +51,7 @@ struct SidebarContentView: View {
                         sidebarMode = .tabs
                     }
                 } label: {
-                    Text("Tabs")
+                    Text("Workspace")
                         .font(.system(size: 12, weight: .medium, design: .rounded))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -68,7 +69,7 @@ struct SidebarContentView: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Tabs")
+                .accessibilityLabel("Workspace")
                 .accessibilityAddTraits(sidebarMode == .tabs ? [.isSelected] : [])
 
                 Button {
@@ -105,7 +106,7 @@ struct SidebarContentView: View {
             .accessibilityLabel("Sidebar mode")
             .accessibilityValue({
                 switch sidebarMode {
-                case .tabs: return "Tabs"
+                case .tabs: return "Workspace"
                 case .agents: return "Agents"
                 }
             }())
@@ -125,6 +126,7 @@ struct SidebarContentView: View {
                                 onTabSelected: onTabSelected,
                                 onCloseTab: onCloseTab,
                                 onGroupRenamed: onGroupRenamed,
+                                onGroupColorChanged: onGroupColorChanged,
                                 onTabRenamed: onTabRenamed,
                                 onCollapseToggled: onCollapseToggled,
                                 onCloseAllTabsInGroup: onCloseAllTabsInGroup,
@@ -135,20 +137,38 @@ struct SidebarContentView: View {
                                         groupReorderState.draggedTabID = group.id
                                         groupReorderState.draggedTabIndex = index
                                     }
+                                    // Unanimated: must track the cursor 1:1.
                                     groupReorderState.dragOffset = translation.height
                                     if let frame = groupReorderState.tabFrames[group.id] {
                                         let midpoint = frame.midY + translation.height
-                                        groupReorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                        // Animated: makes sibling groups
+                                        // visibly slide to make room. Not a
+                                        // standing `.animation(value:)` on
+                                        // the row -- see the matching tab-row
+                                        // comment for why that force-animates
+                                        // the reset-to-0 at release too and
+                                        // races against the unanimated hard
+                                        // refresh `onMoveGroup` triggers.
+                                        withAnimation(.easeOut(duration: 0.18)) {
+                                            groupReorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                        }
                                     }
                                 },
                                 onGroupDragEnded: {
                                     let moveFrom = groupReorderState.draggedTabIndex
                                     let moveTo = moveFrom.flatMap { groupReorderState.destinationIndex(fromIndex: $0, tabCount: groups.count) }
-                                    withAnimation(.easeOut(duration: 0.15)) {
-                                        groupReorderState.reset()
-                                    }
                                     if let from = moveFrom, let to = moveTo {
+                                        // Real move: reset instantly, right
+                                        // before the mutation that triggers
+                                        // `refreshHostingView()`'s unanimated
+                                        // full-tree rebuild -- see the
+                                        // matching tab-row comment.
+                                        groupReorderState.reset()
                                         onMoveGroup?(from, to)
+                                    } else {
+                                        withAnimation(.easeOut(duration: 0.15)) {
+                                            groupReorderState.reset()
+                                        }
                                     }
                                 }
                             )
@@ -160,7 +180,7 @@ struct SidebarContentView: View {
                                     )
                                 }
                             )
-                            .offset(y: groupReorderState.draggedTabID == group.id ? groupReorderState.dragOffset : 0)
+                            .offset(y: groupRowOffset(forGroupIndex: index, groupID: group.id))
                             .zIndex(groupReorderState.draggedTabID == group.id ? 1 : 0)
                             .scaleEffect(groupReorderState.draggedTabID == group.id ? 1.02 : 1.0)
                             .shadow(color: .black.opacity(groupReorderState.draggedTabID == group.id ? 0.15 : 0), radius: 8)
@@ -169,12 +189,6 @@ struct SidebarContentView: View {
                     .coordinateSpace(name: "sidebarGroups")
                     .onPreferenceChange(GroupFramePreferenceKey.self) { frames in
                         groupReorderState.tabFrames = frames
-                    }
-                    .overlay {
-                        if let slot = groupReorderState.insertionSlot,
-                           groupReorderState.draggedTabID != nil {
-                            groupInsertionIndicator(slot: slot)
-                        }
                     }
                     .onChange(of: groups.map(\.id)) { _, _ in
                         groupReorderState.reset()
@@ -211,28 +225,38 @@ struct SidebarContentView: View {
         .accessibilityIdentifier(AccessibilityID.Sidebar.container)
     }
 
-    // MARK: - Group Insertion Indicator
+    // MARK: - Group Live Reflow
 
-    private func groupInsertionIndicator(slot: Int) -> some View {
-        GeometryReader { geo in
-            let sortedFrames = groupReorderState.tabFrames.values.sorted { $0.minY < $1.minY }
-            let yPos: CGFloat = {
-                if slot == 0 {
-                    return sortedFrames.first?.minY ?? 0
-                } else if slot >= sortedFrames.count {
-                    return sortedFrames.last?.maxY ?? geo.size.height
-                } else {
-                    let prev = sortedFrames[slot - 1]
-                    let next = sortedFrames[slot]
-                    return (prev.maxY + next.minY) / 2
-                }
-            }()
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor.opacity(0.8))
-                .frame(width: geo.size.width - 28, height: 2)
-                .position(x: geo.size.width / 2, y: yPos)
+    /// Combines the dragged group's own real-time drag offset with the
+    /// animated make-room offset applied to sibling groups. Mirrors
+    /// `rowOffset`/`reflowOffset` on the tab-row side.
+    private func groupRowOffset(forGroupIndex index: Int, groupID: UUID) -> CGFloat {
+        if groupReorderState.draggedTabID == groupID {
+            return groupReorderState.dragOffset
         }
-        .allowsHitTesting(false)
+        return groupReflowOffset(forGroupIndex: index)
+    }
+
+    private func groupReflowOffset(forGroupIndex index: Int) -> CGFloat {
+        guard let from = groupReorderState.draggedTabIndex,
+              let draggedID = groupReorderState.draggedTabID,
+              index != from,
+              let to = groupReorderState.destinationIndex(fromIndex: from, tabCount: groups.count)
+        else { return 0 }
+
+        // Group rows aren't uniform height (a collapsed group vs. one
+        // expanded with several tabs can differ enormously), but the shift
+        // amount for any affected row is still a constant: removing and
+        // reinserting one row just opens/closes a gap the size of *that*
+        // row (plus the 8pt spacing from the outer VStack at the call
+        // site) -- every row in between slides by that same amount
+        // regardless of its own height.
+        let rowSpan = (groupReorderState.tabFrames[draggedID]?.height ?? 0) + 8
+        if from < to {
+            return (index > from && index <= to) ? -rowSpan : 0
+        } else {
+            return (index >= to && index < from) ? rowSpan : 0
+        }
     }
 }
 
@@ -298,6 +322,7 @@ private struct GroupSectionView: View {
     var onTabSelected: ((UUID) -> Void)?
     var onCloseTab: ((UUID) -> Void)?
     var onGroupRenamed: (() -> Void)?
+    var onGroupColorChanged: (() -> Void)?
     var onTabRenamed: (() -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
@@ -308,6 +333,20 @@ private struct GroupSectionView: View {
     @State private var isEditing = false
     @State private var isHoveringHeader = false
     @State private var reorderState = TabReorderState()
+
+    /// A small filled-circle bitmap, explicitly non-template so AppKit
+    /// renders it in its actual color inside a menu item instead of
+    /// recoloring it to the menu's monochrome tint.
+    private static func swatchImage(for nsColor: NSColor) -> NSImage {
+        let size = NSSize(width: 12, height: 12)
+        let image = NSImage(size: size, flipped: false) { rect in
+            nsColor.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -372,6 +411,28 @@ private struct GroupSectionView: View {
                         }
                         .padding(.vertical, 8)
                         .contentShape(Rectangle())
+                        .contextMenu {
+                            ForEach(TabGroupColor.allCases, id: \.self) { color in
+                                Button {
+                                    group.color = color
+                                    onGroupColorChanged?()
+                                } label: {
+                                    // AppKit treats an SF Symbol used as a
+                                    // menu-item icon as a monochrome
+                                    // "template" image and discards any
+                                    // `.foregroundStyle` tint -- that's why
+                                    // every swatch rendered white/plain.
+                                    // A real (non-template) bitmap image
+                                    // keeps its actual color instead.
+                                    let title = color.rawValue.capitalized + (group.color == color ? "  \u{2713}" : "")
+                                    Label {
+                                        Text(title)
+                                    } icon: {
+                                        Image(nsImage: Self.swatchImage(for: color.nsColor))
+                                    }
+                                }
+                            }
+                        }
 
                         // Close all tabs button (shown on hover)
                         Button(action: { onCloseAllTabsInGroup?(group.id) }) {
@@ -444,20 +505,47 @@ private struct GroupSectionView: View {
                                     reorderState.draggedTabID = tab.id
                                     reorderState.draggedTabIndex = index
                                 }
+                                // Unanimated: must track the cursor 1:1.
                                 reorderState.dragOffset = translation.height
                                 if let frame = reorderState.tabFrames[tab.id] {
                                     let midpoint = frame.midY + translation.height
-                                    reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                    // Animated: this is what makes sibling
+                                    // rows visibly slide to make room as
+                                    // the insertion slot changes. Deliberately
+                                    // NOT a standing `.animation(value:)` on
+                                    // the row -- that would also catch (and
+                                    // force-animate) the reset-to-0 at
+                                    // release, racing against the unanimated
+                                    // hard refresh `onMoveTab` triggers.
+                                    withAnimation(.easeOut(duration: 0.18)) {
+                                        reorderState.updateInsertionSlot(dragMidpoint: midpoint, axis: .vertical)
+                                    }
                                 }
                             },
                             onDragEnded: {
                                 let moveFrom = reorderState.draggedTabIndex
                                 let moveTo = moveFrom.flatMap { reorderState.destinationIndex(fromIndex: $0, tabCount: group.tabs.count) }
-                                withAnimation(.easeOut(duration: 0.15)) {
-                                    reorderState.reset()
-                                }
                                 if let from = moveFrom, let to = moveTo {
+                                    // A real move is about to trigger
+                                    // `onMoveTab` -> `refreshHostingView()`,
+                                    // an imperative full-tree rebuild that
+                                    // isn't animation-aware (see its doc
+                                    // comment). Reset instantly rather than
+                                    // animating: the reflow math already
+                                    // lines this row's dragged offset up
+                                    // with its true destination slot, so an
+                                    // unanimated reset followed by the
+                                    // unanimated rebuild lands on the same
+                                    // position instead of visibly jumping.
+                                    reorderState.reset()
                                     onMoveTab?(group.id, from, to)
+                                } else {
+                                    // No move: nothing will trigger a hard
+                                    // refresh, so animate the snap-back to
+                                    // this row's original slot.
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        reorderState.reset()
+                                    }
                                 }
                             }
                         )
@@ -469,7 +557,7 @@ private struct GroupSectionView: View {
                                 )
                             }
                         )
-                        .offset(y: reorderState.draggedTabID == tab.id ? reorderState.dragOffset : 0)
+                        .offset(y: rowOffset(forRowIndex: index, tabID: tab.id, in: group))
                         .zIndex(reorderState.draggedTabID == tab.id ? 1 : 0)
                         .scaleEffect(reorderState.draggedTabID == tab.id ? 1.03 : 1.0)
                         .shadow(color: .black.opacity(reorderState.draggedTabID == tab.id ? 0.15 : 0), radius: 8)
@@ -484,12 +572,6 @@ private struct GroupSectionView: View {
                 .coordinateSpace(name: "sidebarGroup-\(group.id.uuidString)")
                 .onPreferenceChange(TabFramePreferenceKey.self) { frames in
                     reorderState.tabFrames = frames
-                }
-                .overlay {
-                    if let slot = reorderState.insertionSlot,
-                       reorderState.draggedTabID != nil {
-                        insertionIndicator(slot: slot)
-                    }
                 }
             }
         }
@@ -506,28 +588,34 @@ private struct GroupSectionView: View {
         return Color(hue: Double(h), saturation: Double(s * 0.7), brightness: Double(b * 0.9), opacity: Double(a))
     }
 
-    // MARK: - Insertion Indicator
+    // MARK: - Live Reflow
 
-    private func insertionIndicator(slot: Int) -> some View {
-        GeometryReader { geo in
-            let sortedFrames = reorderState.tabFrames.values.sorted { $0.minY < $1.minY }
-            let yPos: CGFloat = {
-                if slot == 0 {
-                    return sortedFrames.first?.minY ?? 0
-                } else if slot >= sortedFrames.count {
-                    return sortedFrames.last?.maxY ?? geo.size.height
-                } else {
-                    let prev = sortedFrames[slot - 1]
-                    let next = sortedFrames[slot]
-                    return (prev.maxY + next.minY) / 2
-                }
-            }()
-            RoundedRectangle(cornerRadius: 1)
-                .fill(Color.accentColor.opacity(0.8))
-                .frame(width: geo.size.width - 28, height: 2)
-                .position(x: geo.size.width / 2, y: yPos)
+    /// Combines the dragged row's own real-time drag offset with the
+    /// animated make-room offset applied to its siblings, so both are
+    /// driven by a single `.offset` modifier per row.
+    private func rowOffset(forRowIndex index: Int, tabID: UUID, in group: TabGroup) -> CGFloat {
+        if reorderState.draggedTabID == tabID {
+            return reorderState.dragOffset
         }
-        .allowsHitTesting(false)
+        return reflowOffset(forRowIndex: index, in: group)
+    }
+
+    /// How far a sibling row (not the one being dragged) should slide to
+    /// open a gap at the drop destination, replacing the former static
+    /// insertion-line indicator with rows that visibly make room.
+    private func reflowOffset(forRowIndex index: Int, in group: TabGroup) -> CGFloat {
+        guard let from = reorderState.draggedTabIndex,
+              let draggedID = reorderState.draggedTabID,
+              index != from,
+              let to = reorderState.destinationIndex(fromIndex: from, tabCount: group.tabs.count)
+        else { return 0 }
+
+        let rowHeight = reorderState.tabFrames[draggedID]?.height ?? 0
+        if from < to {
+            return (index > from && index <= to) ? -rowHeight : 0
+        } else {
+            return (index >= to && index < from) ? rowHeight : 0
+        }
     }
 }
 
@@ -580,8 +668,18 @@ private struct TabRowItemView: View {
         }
     }
 
+    private var isWorking: Bool {
+        ClaudeTitleHeuristic.classify(title: tab.title) == .working
+    }
+
     private var visibleTitle: String {
-        tab.titleOverride ?? tab.title
+        tab.titleOverride ?? ClaudeTitleHeuristic.stripLeadingSpinnerGlyph(from: tab.title)
+    }
+
+    private var titleColor: Color {
+        if isWorking { return .green }
+        if tab.unreadNotifications > 0 { return .yellow }
+        return .primary
     }
 
     var body: some View {
@@ -642,6 +740,7 @@ private struct TabRowItemView: View {
                     Text(displayText)
                         .lineLimit(1)
                         .font(.system(size: 12.5, weight: isActive ? .semibold : .medium, design: .rounded))
+                        .foregroundStyle(titleColor)
                 }
                 if let branch = tab.gitBranch, !branch.isEmpty, branch != "HEAD" {
                     HStack(spacing: 2) {
@@ -656,9 +755,6 @@ private struct TabRowItemView: View {
                     .layoutPriority(-1)
                 }
                 Spacer()
-                if tab.unreadNotifications > 0 {
-                    UnreadCountBadge(count: tab.unreadNotifications)
-                }
                 // Visual-only close icon. No `.onTapGesture`, no
                 // `Button`. Hit detection is done in
                 // `ClickContainerNSView.mouseDown` against the same

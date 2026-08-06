@@ -281,7 +281,7 @@ extension Tab {
 extension TabGroup {
     convenience init(snapshot: TabGroupSnapshot) {
         let tabs = snapshot.tabs.map { Tab(snapshot: $0) }
-        let color = TabGroupColor(rawValue: snapshot.color ?? "blue") ?? .blue
+        let color = TabGroupColor.decode(rawValue: snapshot.color)
         self.init(
             id: snapshot.id,
             name: snapshot.name,

@@ -39,6 +39,7 @@ struct MainContentView: View {
     var onNewGroup: (() -> Void)?
     var onCloseTab: ((UUID) -> Void)?
     var onGroupRenamed: (() -> Void)?
+    var onGroupColorChanged: (() -> Void)?
     var onTabRenamed: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
     var onDismissCommandPalette: (() -> Void)?
@@ -125,6 +126,7 @@ struct MainContentView: View {
                         onNewGroup: onNewGroup,
                         onCloseTab: onCloseTab,
                         onGroupRenamed: onGroupRenamed,
+                        onGroupColorChanged: onGroupColorChanged,
                         onTabRenamed: onTabRenamed,
                         onCollapseToggled: onCollapseToggled,
                         onCloseAllTabsInGroup: onCloseAllTabsInGroup,
