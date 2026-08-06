@@ -31,3 +31,6 @@ ghostty/zig-out/
 Packages/
 Package.resolved
 scratchpad
+
+# Worktrees
+.worktrees/
