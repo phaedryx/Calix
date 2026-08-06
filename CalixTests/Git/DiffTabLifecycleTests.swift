@@ -998,12 +998,13 @@ struct DiffTabLifecycleTests {
 
     // Companion guard for the same fix: closing an UNRELATED diff pane must
     // not stop monitoring out from under a changes panel that's still open
-    // on the same tab. A naive fix that always reconciles by re-running
-    // `activateCurrentTab()`'s full if/else (rather than only ever stopping)
-    // would take the `isChangesPanelVisible == true` branch here and kick
-    // off a fresh `refreshStatus()` as a side effect of closing an unrelated
-    // pane -- this proves the monitor instead simply keeps running,
-    // untouched, pointed at the same repo it already was.
+    // on the same tab. Proves the monitor is still alive and still pointed
+    // at the right repo after an unrelated pane closes -- the design
+    // argument for why `reconcileGitChangesMonitor` is deliberately
+    // one-directional (stop-only, never refresh-on-open) lives in that
+    // method's own doc comment; this test can't fully discriminate a
+    // spurious extra `refreshStatus()` call from a no-op (both leave the
+    // monitor pointed at the same repo), just that nothing got stopped.
     @Test func closingAnUnrelatedDiffPane_leavesTheChangesPanelsMonitorRunning() async throws {
         let scratchDirectory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratchDirectory) }
@@ -1053,11 +1054,15 @@ struct DiffTabLifecycleTests {
         try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectory.path)
 
         // Explicit teardown: this test, unlike its sibling above, deliberately
-        // leaves the monitor live at the end of its assertions. Tearing it
-        // down before the test scope exits (rather than leaving a live
-        // FSEventStream to outlive `controller`'s deallocation, racing this
-        // test's own `defer` deleting `scratchDirectory` out from under it)
-        // avoids destabilizing whichever test happens to run next.
+        // leaves the monitor live at the end of its assertions. Isolated via
+        // a controlled experiment (temporarily dropping this call and the
+        // `defer` delete above, independently): the crash this guards
+        // against reproduces ONLY when the watched directory is deleted out
+        // from under a monitor that outlives this test's `controller`
+        // deallocating without `shutdown()` -- not from the leaked monitor
+        // alone. That still points at a real gap one level up (see this
+        // task's report), but the narrow fix here is to not delete a
+        // directory a live FSEventStream still has an opinion about.
         gitChangesController.shutdown()
     }
 
