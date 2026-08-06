@@ -1227,10 +1227,32 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             // panel is closed, not when focus merely moves elsewhere).
             // Reconcile monitor state to the newly active tab here: since
             // this branch means the new tab's panel isn't open, nothing
-            // should still be watched. `stopMonitoring` is a no-op if
-            // nothing was ever started.
-            gitChangesController.stopMonitoring(cancelRefresh: false)
+            // should still be watched.
+            reconcileGitChangesMonitor(for: tab)
         }
+    }
+
+    /// Stops the live `GitChangesMonitor` if the ACTIVE tab's changes panel
+    /// is not open. Extracted from this method's own inline logic (Task 10)
+    /// so `closePane` can share it: closing a `.gitChanges` pane via its own
+    /// close button (rather than the `toggleChangesPanel()` toolbar toggle,
+    /// which already calls `stopMonitoring` itself) used to leave the panel's
+    /// FSEvents watch running forever, since nothing else stopped it.
+    ///
+    /// Deliberately one-directional -- it only ever STOPS the monitor, never
+    /// starts one or triggers a refresh. `GitChangesController`'s monitor
+    /// operations are scoped to `windowSession.activeGroup?.activeTab`
+    /// (`isChangesPanelVisible`, `refreshStatus`, `stopMonitoring` all read
+    /// or act on that), so a caller here must itself already know `tab` is
+    /// the active tab -- `activateCurrentTab()` always does by construction;
+    /// `closePane` checks explicitly before calling this. Folding the
+    /// "still open -> refresh" branch in here too would make closing an
+    /// unrelated diff pane (panel elsewhere in the same tab still open)
+    /// silently kick off a fresh `git status` as a side effect, which
+    /// `closePane` has no reason to trigger.
+    private func reconcileGitChangesMonitor(for tab: Tab) {
+        guard !gitChangesController.isChangesPanelVisible else { return }
+        gitChangesController.stopMonitoring(cancelRefresh: false)
     }
 
     private func deactivateCurrentTab() {
@@ -2422,6 +2444,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             if let focusID = focusTarget, let focusView = tab.registry.view(for: focusID) {
                 window?.makeFirstResponder(focusView)
             }
+            // The pane just removed may have been the tab's `.gitChanges`
+            // leaf itself (its own close button, not the toolbar toggle
+            // that already stops the monitor) -- if so, this was the
+            // ACTIVE tab's last thing keeping a live FSEvents watch on its
+            // repo. Only meaningful when `tab` is the active tab, same as
+            // `reconcileGitChangesMonitor`'s own scoping.
+            reconcileGitChangesMonitor(for: tab)
         }
         refreshHostingView()
         requestSave()

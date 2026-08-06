@@ -947,6 +947,120 @@ struct DiffTabLifecycleTests {
         #expect(!tabA.gitEntries.isEmpty, "tabA's cached gitEntries should survive a tab switch without needing a fresh refreshStatus() call")
     }
 
+    // Carried-forward fix (Task 10 review, landed here per the plan): the
+    // changes panel's own close button routes through `closePane`, which
+    // never stopped the live `GitChangesMonitor` at all -- only
+    // `toggleChangesPanel()`'s close branch did. A user who opens the panel
+    // then closes it via its X (rather than the toolbar toggle) used to leak
+    // the FSEvents watch on the tab's repo indefinitely. Seeds the monitor
+    // through `toggleChangesPanel()` itself (the real open path, same as
+    // production) rather than a synthetic `paneContent[UUID()] = .gitChanges`
+    // seed, so the leaf id closed below is the exact one a real close button
+    // would carry.
+    //
+    // Deliberately NOT `makeTerminalTab` here: that registers a real
+    // `SurfaceView` in the tab's registry, and `closePane`'s post-close
+    // focus-restore (`window?.makeFirstResponder(focusView)`) then tries to
+    // focus a view this test's off-screen `CalixWindow` never actually laid
+    // out, which AppKit logs as an invalid-first-responder error. A plain
+    // `Tab` with no registry entries makes `registry.view(for:)` nil for
+    // the remaining terminal leaf, so that branch is skipped -- irrelevant
+    // to what this test is actually proving (monitor lifecycle, not focus).
+    @Test func closingChangesPanelPane_viaItsOwnCloseButton_stopsMonitoring() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+
+        let tab = Tab(pwd: scratchDirectory.path)
+        tab.splitTree = SplitTree(leafID: UUID())
+        let group = TabGroup(name: "Default", tabs: [tab], activeTabID: tab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+        let gitChangesController = controller._gitChangesControllerForTesting
+
+        gitChangesController.toggleChangesPanel()
+        guard let changesLeafID = tab.paneContent.first(where: { $0.value == .gitChanges })?.key else {
+            Issue.record("Expected toggleChangesPanel() to insert a .gitChanges leaf")
+            return
+        }
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectory.path)
+
+        controller._closePaneForTesting(leafID: changesLeafID)
+
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: nil)
+    }
+
+    // Companion guard for the same fix: closing an UNRELATED diff pane must
+    // not stop monitoring out from under a changes panel that's still open
+    // on the same tab. A naive fix that always reconciles by re-running
+    // `activateCurrentTab()`'s full if/else (rather than only ever stopping)
+    // would take the `isChangesPanelVisible == true` branch here and kick
+    // off a fresh `refreshStatus()` as a side effect of closing an unrelated
+    // pane -- this proves the monitor instead simply keeps running,
+    // untouched, pointed at the same repo it already was.
+    @Test func closingAnUnrelatedDiffPane_leavesTheChangesPanelsMonitorRunning() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let tab = Tab(pwd: scratchDirectory.path)
+        tab.splitTree = SplitTree(leafID: UUID())
+        let group = TabGroup(name: "Default", tabs: [tab], activeTabID: tab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+        let gitChangesController = controller._gitChangesControllerForTesting
+
+        gitChangesController.toggleChangesPanel()
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectory.path)
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = tab.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let leavesBefore = Set(tab.splitTree.allLeafIDs())
+        let entry = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        gitChangesController.handleWorkingFileSelected(entry)
+        guard let diffLeafID = tab.splitTree.allLeafIDs().first(where: { !leavesBefore.contains($0) }) else {
+            Issue.record("Expected a new diff leaf to be inserted")
+            return
+        }
+
+        controller._closePaneForTesting(leafID: diffLeafID)
+
+        // Still open, still watching -- unaffected by the unrelated pane's close.
+        #expect(gitChangesController.isChangesPanelVisible)
+        try await waitForMonitoredWorkTree(gitChangesController, toBe: scratchDirectory.path)
+
+        // Explicit teardown: this test, unlike its sibling above, deliberately
+        // leaves the monitor live at the end of its assertions. Tearing it
+        // down before the test scope exits (rather than leaving a live
+        // FSEventStream to outlive `controller`'s deallocation, racing this
+        // test's own `defer` deleting `scratchDirectory` out from under it)
+        // avoids destabilizing whichever test happens to run next.
+        gitChangesController.shutdown()
+    }
+
     // Free regression guard carried from the plan's own test sketch: `Tab`'s
     // own storage is untouched by switching `activeGroupID` -- this never
     // enters `activateCurrentTab()` at all, so it's evidence Task 2's
