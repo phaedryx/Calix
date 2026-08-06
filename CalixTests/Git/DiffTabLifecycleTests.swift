@@ -162,6 +162,71 @@ struct DiffTabLifecycleTests {
         #expect(path == "one.txt")
     }
 
+    @Test func handleWorkingFileSelected_keepsFocusOnTerminalLeaf() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let terminalTab = Tab(pwd: scratchDirectory.path)
+        // Simulate a real terminal tab: production always wires a genuine
+        // ghostty surface leaf into `splitTree` before any diff pane can be
+        // opened (see `CalixWindowController`'s various
+        // `tab.splitTree = SplitTree(leafID: surfaceID)` call sites). The
+        // other tests in this file use the default empty `SplitTree()`,
+        // which masks this bug entirely (an empty tree has no terminal leaf
+        // to lose focus from).
+        let terminalLeafID = UUID()
+        terminalTab.splitTree = SplitTree(leafID: terminalLeafID)
+
+        let session = WindowSession(initialTab: terminalTab)
+        let group = session.activeGroup!
+
+        let controller = GitChangesController(
+            windowSession: session,
+            refresh: {},
+            switchToTab: { id in group.activeTabID = id },
+            deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        controller.refreshStatus()
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = terminalTab.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let leavesBefore = Set(terminalTab.splitTree.allLeafIDs())
+        let entry = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        controller.handleWorkingFileSelected(entry)
+
+        guard let diffLeafID = terminalTab.splitTree.allLeafIDs().first(where: { !leavesBefore.contains($0) }) else {
+            Issue.record("Expected a new diff leaf to be inserted")
+            return
+        }
+
+        // The diff pane has no ghostty surface -- keyboard focus must stay
+        // on the terminal leaf, or the terminal loses first-responder the
+        // moment the diff pane is opened (and again every time the tab is
+        // revisited, since `focusActiveTabImmediately`/`attemptFocusRestore`
+        // both bail when `registry.view(for:)` is nil for the focused leaf).
+        #expect(terminalTab.splitTree.focusedLeafID == terminalLeafID)
+        #expect(terminalTab.splitTree.focusedLeafID != diffLeafID)
+
+        // Reopening the same file (dedup path) must not move focus either.
+        controller.handleWorkingFileSelected(entry)
+        #expect(terminalTab.splitTree.allLeafIDs().count == 2, "dedup should not create a second diff leaf")
+        #expect(terminalTab.splitTree.focusedLeafID == terminalLeafID)
+    }
+
     @Test func handleWorkingFileSelected_secondTab_wrongTerminalTabPicksWrongRepoRoot() async throws {
         // Repo the user is actually working in.
         let realRepo = try makeScratchDirectory()

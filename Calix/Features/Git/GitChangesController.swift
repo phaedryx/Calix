@@ -233,20 +233,43 @@ final class GitChangesController {
         guard let group = windowSession.activeGroup, let tab = group.activeTab else { return }
 
         // Dedup: check if this source is already open as a pane in this tab.
-        if let existingLeafID = tab.paneContent.first(where: {
+        // Deliberately does NOT touch `focusedLeafID` -- see the note below
+        // on why the fresh-insertion path restores focus to the terminal
+        // leaf; the same reasoning applies here, and there's no existing
+        // leaf to refocus onto that has a ghostty surface anyway.
+        if tab.paneContent.contains(where: {
             if case .diff(let existingSource) = $0.value { return existingSource == source }
             return false
-        })?.key {
-            tab.splitTree.focusedLeafID = existingLeafID
+        }) {
             refresh()
             return
         }
 
+        // The leaf the diff pane is being inserted next to -- almost always
+        // the terminal leaf the user was focused on. Restored below so
+        // keyboard focus stays on the terminal: `focusedLeafID` is read as
+        // "the leaf with keyboard focus" by `focusActiveTabImmediately`/
+        // `attemptFocusRestore` (CalixWindowController) and surfaced over
+        // MCP as `isFocused` by `CockpitAppAccess.listPanes`. A diff pane
+        // has no ghostty surface, so leaving focus on it (as `insert`
+        // otherwise does) makes all three readers wrong until the user
+        // manually clicks the terminal.
+        let insertionLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first ?? UUID()
         let (newTree, newLeafID) = tab.splitTree.insert(
-            at: tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first ?? UUID(),
+            at: insertionLeafID,
             direction: .horizontal
         )
         tab.splitTree = newTree
+        if tab.splitTree.allLeafIDs().contains(insertionLeafID) {
+            // Normal case: the terminal leaf we split against still exists
+            // in the resulting tree -- keep it focused.
+            tab.splitTree.focusedLeafID = insertionLeafID
+        }
+        // Else: `insertionLeafID` was a fallback (no terminal leaf existed
+        // to split against, e.g. a tab with an empty splitTree), so `insert`
+        // built a fresh tree with only `newLeafID` in it. Leave
+        // `focusedLeafID` as `insert` set it (the new leaf) -- there's
+        // nothing else to focus.
         tab.paneContent[newLeafID] = .diff(source: source)
 
         diffStates[newLeafID] = .loading
