@@ -2363,9 +2363,21 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
         gitChangesController.closeDiffPane(leafID)
         tab.paneContent.removeValue(forKey: leafID)
-        tab.splitTree = tab.splitTree.remove(leafID).tree
+        let (newTree, focusTarget) = tab.splitTree.remove(leafID)
+        tab.splitTree = newTree
         if tab.id == activeTab?.id {
             splitContainerView?.updateLayout(tree: tab.splitTree)
+            // Mirrors `closeSurfaceAndCleanUp`'s own restore: a diff
+            // pane's close button can itself have grabbed first
+            // responder on click, and AppKit does not retarget it to
+            // some other view on its own once the pane's NSHostingView
+            // is removed from the hierarchy above -- without this, the
+            // terminal the pane was split against goes deaf to
+            // keystrokes until the user clicks back into it. `remove`
+            // hands back exactly that sibling leaf as `focusTarget`.
+            if let focusID = focusTarget, let focusView = tab.registry.view(for: focusID) {
+                window?.makeFirstResponder(focusView)
+            }
         }
         refreshHostingView()
         requestSave()
