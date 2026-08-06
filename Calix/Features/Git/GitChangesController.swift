@@ -64,21 +64,6 @@ final class GitChangesController {
         windowSession.showSidebar && windowSession.sidebarMode == .changes
     }
 
-    var activeDiffState: DiffLoadState? {
-        guard let tab = activeTab, case .diff = tab.content else { return nil }
-        return diffStates[tab.id]
-    }
-
-    var activeDiffSource: DiffSource? {
-        guard let tab = activeTab, case .diff(let source) = tab.content else { return nil }
-        return source
-    }
-
-    var activeDiffReviewStore: DiffReviewStore? {
-        guard let tab = activeTab, case .diff = tab.content else { return nil }
-        return reviewStores[tab.id]
-    }
-
     var totalReviewCommentCount: Int {
         reviewStores.values.filter { $0.hasUnsubmittedComments }.reduce(0) { $0 + $1.comments.count }
     }
@@ -96,6 +81,14 @@ final class GitChangesController {
     /// panes, keyed by split-tree leaf ID).
     func diffState(for id: UUID) -> DiffLoadState? {
         diffStates[id]
+    }
+
+    /// The `DiffSource` a given leaf was opened with, looked up from the
+    /// active tab's `paneContent` -- there is no longer a single "the
+    /// active diff", since a tab can have multiple open diff panes.
+    func diffSource(for leafID: UUID) -> DiffSource? {
+        guard case .diff(let source) = activeTab?.paneContent[leafID] else { return nil }
+        return source
     }
 
     // MARK: - Sidebar / Monitoring
@@ -237,44 +230,32 @@ final class GitChangesController {
     }
 
     private func openDiffTab(source: DiffSource) {
-        // Dedup: check if same source already open
-        if let group = windowSession.activeGroup {
-            for tab in group.tabs {
-                if case .diff(let existingSource) = tab.content, existingSource == source {
-                    switchToTab(tab.id)
-                    return
-                }
-            }
+        guard let group = windowSession.activeGroup, let tab = group.activeTab else { return }
+
+        // Dedup: check if this source is already open as a pane in this tab.
+        if let existingLeafID = tab.paneContent.first(where: {
+            if case .diff(let existingSource) = $0.value { return existingSource == source }
+            return false
+        })?.key {
+            tab.splitTree.focusedLeafID = existingLeafID
+            refresh()
+            return
         }
 
-        guard let group = windowSession.activeGroup else { return }
+        let (newTree, newLeafID) = tab.splitTree.insert(
+            at: tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first ?? UUID(),
+            direction: .horizontal
+        )
+        tab.splitTree = newTree
+        tab.paneContent[newLeafID] = .diff(source: source)
 
-        let fileName: String
-        switch source {
-        case .unstaged(let path, _), .staged(let path, _), .branchDelta(let path, _, _), .untracked(let path, _):
-            fileName = (path as NSString).lastPathComponent
-        }
-
-        let tab = Tab(title: fileName, content: .diff(source: source))
-        deactivateCurrentTab()
-        group.addTab(tab)
-        group.activeTabID = tab.id
-
-        diffStates[tab.id] = .loading
+        diffStates[newLeafID] = .loading
         let reviewStore = DiffReviewStore()
         reviewStore.onCommentsChanged = { [weak self] in self?.refresh() }
-        reviewStores[tab.id] = reviewStore
+        reviewStores[newLeafID] = reviewStore
         refresh()
 
-        let tabID = tab.id
-        // Plain subscript store, not `insert(_:task:)`: tabID is the id
-        // of the `Tab()` just created above, so this key was never
-        // registered before -- `insert`'s cancel-before-replace would
-        // never actually match anything here. This Task also never
-        // self-removes its own entry once done (unlike `childExitedTasks`'
-        // Tasks) -- a pre-existing divergence kept as-is here, not
-        // something this refactor changes.
-        diffTasks[tabID] = Task { [weak self] in
+        diffTasks[newLeafID] = Task { [weak self] in
             guard let self else { return }
             do {
                 let rawDiff = try await GitService.fileDiff(source: source)
@@ -288,14 +269,12 @@ final class GitChangesController {
                 let parsed = DiffParser.parse(rawDiff, path: path)
                 guard !Task.isCancelled else { return }
 
-                // Verify tab still exists
-                guard self.windowSession.groups.flatMap(\.tabs).contains(where: { $0.id == tabID }) else { return }
-
-                self.diffStates[tabID] = .success(parsed)
+                guard tab.paneContent[newLeafID] != nil else { return }
+                self.diffStates[newLeafID] = .success(parsed)
                 self.refresh()
             } catch {
                 guard !Task.isCancelled else { return }
-                self.diffStates[tabID] = .error(error.localizedDescription)
+                self.diffStates[newLeafID] = .error(error.localizedDescription)
                 self.refresh()
             }
         }
@@ -354,8 +333,8 @@ final class GitChangesController {
         }
     }
 
-    func discardReview(tabID: UUID) {
-        guard let store = reviewStores[tabID] else { return }
+    func discardReview(leafID: UUID) {
+        guard let store = reviewStores[leafID] else { return }
         store.clearAll()
         refresh()
     }

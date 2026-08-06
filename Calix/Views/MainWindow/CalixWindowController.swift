@@ -126,7 +126,19 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// only because first access happens post-`super.init()`.
     private lazy var gitChangesController: GitChangesController = GitChangesController(
         windowSession: windowSession,
-        refresh: { [weak self] in self?.refreshHostingView() },
+        refresh: { [weak self] in
+            self?.refreshHostingView()
+            // `openDiffTab` mutates `tab.splitTree` (a leaf insert), which
+            // `updateTerminalLayout()` must see to actually build the new
+            // pane's `NSHostingView` -- `refreshPaneContent()` alone only
+            // repaints hosting views that already exist. Once the tree is
+            // synced, `refreshPaneContent()` covers the pure-data-changed
+            // case (git status reload, diff finishing load, a new review
+            // comment) that `updateLayout(tree:)` would otherwise no-op on
+            // since the tree itself didn't change.
+            self?.updateTerminalLayout()
+            self?.splitContainerView?.refreshPaneContent()
+        },
         switchToTab: { [weak self] id in self?.switchToTab(id: id) },
         deactivateCurrentTab: { [weak self] in self?.deactivateCurrentTab() },
         sendToAgent: { [weak self] payload in self?.sendReviewToAgent(payload) ?? .failed }
@@ -992,9 +1004,16 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             commandRegistry: commandRegistry,
             splitContainerView: splitContainerView ?? SplitContainerView(registry: SurfaceRegistry()),
             activeBrowserController: activeBrowserController,
-            activeDiffState: gitChangesController.activeDiffState,
-            activeDiffSource: gitChangesController.activeDiffSource,
-            activeDiffReviewStore: gitChangesController.activeDiffReviewStore,
+            // `TabContent.diff`-backed whole-tab diff tabs are no longer
+            // created (see GitChangesController.openDiffTab) -- diffs now
+            // live as `paneContent` leaves inside a tab's `splitTree`,
+            // rendered by `SplitContainerView`/`DiffPaneView` instead.
+            // These three always nil out until Task 8 deletes this
+            // whole-tab-diff rendering path (and `TabContent.diff`) from
+            // `MainContentView` entirely.
+            activeDiffState: nil,
+            activeDiffSource: nil,
+            activeDiffReviewStore: nil,
             recoveryBarModel: recoveryBarModel,
             approvalBannerModel: approvalBannerModel,
             sidebarMode: Binding(
@@ -1041,7 +1060,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             },
             onDiscardReview: { [weak self] in
                 guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.discardReview(tabID: tab.id)
+                self.gitChangesController.discardReview(leafID: tab.id)
             },
             onSubmitAllReviews: { [weak self] in
                 self?.gitChangesController.submitAllDiffReviews()
@@ -1134,7 +1153,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 self?.gitChangesController.submitDiffReview(tabID: leafID)
             }
             container.onDiscardReview = { [weak self] leafID in
-                self?.gitChangesController.discardReview(tabID: leafID)
+                self?.gitChangesController.discardReview(leafID: leafID)
             }
             container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
             container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }

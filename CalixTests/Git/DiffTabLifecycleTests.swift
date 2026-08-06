@@ -104,26 +104,19 @@ struct DiffTabLifecycleTests {
         #expect(storedSource == source)
     }
 
-    @Test func handleWorkingFileSelected_secondTab_loadsIndependentDiff() async throws {
+    @Test func handleWorkingFileSelected_insertsLeafIntoActiveTabSplitTree() async throws {
         let scratchDirectory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratchDirectory) }
-
         try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
-        try "one\n".write(
-            to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
-        try "two\n".write(
-            to: scratchDirectory.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
         try runGit(["add", "-A"], in: scratchDirectory)
         try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
-
-        try "one-changed\n".write(
-            to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
-        try "two-changed\n".write(
-            to: scratchDirectory.appendingPathComponent("two.txt"), atomically: true, encoding: .utf8)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
 
         let terminalTab = Tab(pwd: scratchDirectory.path)
         let session = WindowSession(initialTab: terminalTab)
         let group = session.activeGroup!
+        let terminalLeafCountBefore = terminalTab.splitTree.allLeafIDs().count
 
         let controller = GitChangesController(
             windowSession: session,
@@ -134,58 +127,39 @@ struct DiffTabLifecycleTests {
         )
 
         controller.refreshStatus()
-        let statusDeadline = ContinuousClock.now + Duration.seconds(5)
+        let deadline = ContinuousClock.now + Duration.seconds(5)
         while true {
             if case .loaded = terminalTab.gitChangesState { break }
-            guard ContinuousClock.now < statusDeadline else {
-                Issue.record("Timed out waiting for initial git status load, state: \(terminalTab.gitChangesState)")
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
                 return
             }
             try await Task.sleep(for: .milliseconds(20))
         }
 
-        let entry1 = GitFileEntry(
-            path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
-        let entry2 = GitFileEntry(
-            path: "two.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        let entry = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        controller.handleWorkingFileSelected(entry)
 
-        controller.handleWorkingFileSelected(entry1)
-        guard let tab1 = group.tabs.last else {
-            Issue.record("Expected first diff tab to be created")
+        // No new sibling Tab -- still exactly one Tab in the group.
+        #expect(group.tabs.count == 1)
+        #expect(group.tabs[0].id == terminalTab.id)
+
+        // A new leaf was inserted into the SAME tab's splitTree.
+        #expect(terminalTab.splitTree.allLeafIDs().count == terminalLeafCountBefore + 1)
+
+        guard let diffLeafID = terminalTab.splitTree.allLeafIDs().first(where: { $0 != terminalTab.splitTree.root?.leafID }) ?? terminalTab.splitTree.allLeafIDs().last else {
+            Issue.record("Expected a diff leaf")
             return
         }
-        try await waitForDiffState(controller: controller, group: group, tabID: tab1.id)
-
-        // Per-tab repoRoot means only the terminal tab that actually loaded
-        // git status carries a resolved repoRoot -- switch back to it before
-        // selecting the next file, mirroring how the (Task 9) per-tab panel
-        // will keep the changes list scoped to its own originating tab
-        // rather than to whatever tab happens to be active.
-        group.activeTabID = terminalTab.id
-        controller.handleWorkingFileSelected(entry2)
-        guard let tab2 = group.tabs.last, tab2.id != tab1.id else {
-            Issue.record("Expected second diff tab to be created")
+        guard case .diff(let source) = terminalTab.paneContent[diffLeafID] else {
+            Issue.record("Expected paneContent[diffLeafID] == .diff")
             return
         }
-        try await waitForDiffState(controller: controller, group: group, tabID: tab2.id)
-
-        group.activeTabID = tab1.id
-        guard case .success(let diff1) = controller.activeDiffState else {
-            Issue.record("Expected tab1 diff state .success, got \(String(describing: controller.activeDiffState))")
+        guard case .unstaged(let path, _) = source else {
+            Issue.record("Expected .unstaged source")
             return
         }
-
-        group.activeTabID = tab2.id
-        guard case .success(let diff2) = controller.activeDiffState else {
-            Issue.record("Expected tab2 diff state .success, got \(String(describing: controller.activeDiffState))")
-            return
-        }
-
-        #expect(diff1.path == "one.txt")
-        #expect(diff2.path == "two.txt")
-        #expect(!diff1.lines.isEmpty)
-        #expect(!diff2.lines.isEmpty)
-        #expect(diff1.lines != diff2.lines)
+        #expect(path == "one.txt")
     }
 
     @Test func handleWorkingFileSelected_secondTab_wrongTerminalTabPicksWrongRepoRoot() async throws {
@@ -244,52 +218,55 @@ struct DiffTabLifecycleTests {
         let entry2 = GitFileEntry(
             path: "two.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
 
+        // Diffs are now panes inserted into `realRepoTab`'s own
+        // `splitTree` -- `group.activeTabID` never changes across either
+        // `handleWorkingFileSelected` call, so `otherTab` sitting earlier
+        // in `group.tabs` has no opportunity to be consulted at all. What
+        // this test still guards: `repoRoot` lives on `realRepoTab`
+        // itself (resolved once when its own git status loaded), not on
+        // a window-level cache keyed by workDir -- so both diff panes
+        // opened from it resolve the same, correct repo.
+        let leavesBeforeFirst = Set(realRepoTab.splitTree.allLeafIDs())
         controller.handleWorkingFileSelected(entry1)
-        guard let tab1 = group.tabs.last else {
-            Issue.record("Expected first diff tab to be created")
+        guard let leaf1 = realRepoTab.splitTree.allLeafIDs().first(where: { !leavesBeforeFirst.contains($0) }) else {
+            Issue.record("Expected first diff leaf to be created")
             return
         }
-        try await waitForDiffState(controller: controller, group: group, tabID: tab1.id)
+        try await waitForDiffState(controller: controller, leafID: leaf1)
 
-        group.activeTabID = tab1.id
-        guard case .success(let diff1) = controller.activeDiffState, case .unstaged(_, let workDir1) = controller.activeDiffSource else {
-            Issue.record("Expected tab1 .success with an unstaged source, got \(String(describing: controller.activeDiffState))")
+        guard case .success(let diff1) = controller.diffState(for: leaf1),
+              case .diff(let source1) = realRepoTab.paneContent[leaf1],
+              case .unstaged(_, let workDir1) = source1 else {
+            Issue.record("Expected leaf1 .success with an unstaged source, got \(String(describing: controller.diffState(for: leaf1)))")
             return
         }
-        #expect(workDir1.hasSuffix(realRepo.lastPathComponent), "tab1 should resolve the real repo (active terminal tab)")
+        #expect(workDir1.hasSuffix(realRepo.lastPathComponent), "leaf1 should resolve the real repo (active terminal tab)")
         #expect(!diff1.lines.isEmpty)
 
-        // `repoRoot` now lives on `realRepoTab` itself, not on a
-        // window-level cache keyed by workDir -- so re-activating
-        // `realRepoTab` (the tab that actually loaded git status) before
-        // the next selection resolves unambiguously to its own repo,
-        // regardless of `otherTab` sitting earlier in `group.tabs`. This
-        // is the structural fix for the old fallback-across-tabs bug: there
-        // is no shared cache left for `otherTab` to have poisoned.
-        group.activeTabID = realRepoTab.id
+        let leavesBeforeSecond = Set(realRepoTab.splitTree.allLeafIDs())
         controller.handleWorkingFileSelected(entry2)
-        guard let tab2 = group.tabs.last, tab2.id != tab1.id else {
-            Issue.record("Expected second diff tab to be created")
+        guard let leaf2 = realRepoTab.splitTree.allLeafIDs().first(where: { !leavesBeforeSecond.contains($0) }) else {
+            Issue.record("Expected second diff leaf to be created")
             return
         }
-        try await waitForDiffState(controller: controller, group: group, tabID: tab2.id)
+        try await waitForDiffState(controller: controller, leafID: leaf2)
 
-        group.activeTabID = tab2.id
-        guard case .unstaged(_, let workDir2) = controller.activeDiffSource else {
-            Issue.record("Expected tab2 to have an unstaged source")
+        guard case .diff(let source2) = realRepoTab.paneContent[leaf2],
+              case .unstaged(_, let workDir2) = source2 else {
+            Issue.record("Expected leaf2 to have an unstaged source")
             return
         }
         #expect(
             workDir2 == workDir1,
-            "tab2 resolved workDir \(workDir2), not tab1's repo \(workDir1) -- per-tab repoRoot should make this impossible even with otherTab earlier in group.tabs"
+            "leaf2 resolved workDir \(workDir2), not leaf1's repo \(workDir1) -- per-tab repoRoot should make this impossible even with otherTab earlier in group.tabs"
         )
-        guard case .success(let diff2) = controller.activeDiffState else {
-            Issue.record("Expected tab2 .success, got \(String(describing: controller.activeDiffState))")
+        guard case .success(let diff2) = controller.diffState(for: leaf2) else {
+            Issue.record("Expected leaf2 .success, got \(String(describing: controller.diffState(for: leaf2)))")
             return
         }
         #expect(
             !diff2.lines.isEmpty,
-            "tab2's diff is empty (blank content, correct title) -- it ran against the wrong repo's workDir"
+            "leaf2's diff is empty (blank content, correct title) -- it ran against the wrong repo's workDir"
         )
     }
 
@@ -342,18 +319,17 @@ struct DiffTabLifecycleTests {
     }
 
     private func waitForDiffState(
-        controller: GitChangesController, group: TabGroup, tabID: UUID,
+        controller: GitChangesController, leafID: UUID,
         timeout: Duration = .seconds(5)
     ) async throws {
         let deadline = ContinuousClock.now + timeout
-        group.activeTabID = tabID
         while ContinuousClock.now < deadline {
-            if case .loading = controller.activeDiffState {
+            if case .loading = controller.diffState(for: leafID) {
                 try await Task.sleep(for: .milliseconds(20))
                 continue
             }
             return
         }
-        Issue.record("Timed out waiting for diff state on tab \(tabID)")
+        Issue.record("Timed out waiting for diff state on leaf \(leafID)")
     }
 }
