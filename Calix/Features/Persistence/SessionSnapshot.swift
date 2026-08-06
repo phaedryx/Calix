@@ -231,7 +231,7 @@ extension TabGroup {
             id: id,
             name: name,
             color: color.rawValue,
-            tabs: tabs.compactMap { $0.snapshot(browserURLOverride: browserURLOverride($0.id)) },
+            tabs: tabs.map { $0.snapshot(browserURLOverride: browserURLOverride($0.id)) },
             activeTabID: activeTabID,
             isCollapsed: isCollapsed
         )
@@ -242,13 +242,21 @@ extension Tab {
     /// - Parameter browserURLOverride: When non-nil and `content` is
     ///   `.browser`, wins over the tab's configured URL. See
     ///   `TabGroup.snapshot(browserURLOverride:)`'s doc comment.
-    func snapshot(browserURLOverride: URL? = nil) -> TabSnapshot? {
+    func snapshot(browserURLOverride: URL? = nil) -> TabSnapshot {
         let refs = sessionRefs.isEmpty ? nil : sessionRefs
+        // paneContent-keyed leaves (git-changes/diff panes) are ephemeral —
+        // they have no real ghostty surface behind them, so they must not
+        // survive into a persisted snapshot (matches how the old separate
+        // "diff tabs" were dropped from snapshots entirely).
+        var persistedTree = splitTree
+        for leafID in paneContent.keys {
+            persistedTree = persistedTree.remove(leafID).tree
+        }
         switch content {
         case .terminal:
-            return TabSnapshot(id: id, title: title, titleOverride: titleOverride, pwd: pwd, splitTree: splitTree, browserURL: nil, sessionRefs: refs)
+            return TabSnapshot(id: id, title: title, titleOverride: titleOverride, pwd: pwd, splitTree: persistedTree, browserURL: nil, sessionRefs: refs)
         case .browser(let url):
-            return TabSnapshot(id: id, title: title, titleOverride: titleOverride, pwd: pwd, splitTree: splitTree, browserURL: browserURLOverride ?? url, sessionRefs: refs)
+            return TabSnapshot(id: id, title: title, titleOverride: titleOverride, pwd: pwd, splitTree: persistedTree, browserURL: browserURLOverride ?? url, sessionRefs: refs)
         }
     }
 

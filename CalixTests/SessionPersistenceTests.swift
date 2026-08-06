@@ -667,10 +667,48 @@ final class SessionPersistenceTests: XCTestCase {
         let tab = Tab(title: "Terminal")
         tab.titleOverride = "Server 1"
 
-        let snapshot = tab.snapshot()!
+        let snapshot = tab.snapshot()
 
         XCTAssertEqual(snapshot.titleOverride, "Server 1",
                        "Tab.snapshot() should capture titleOverride")
+    }
+
+    /// Tab.snapshot() should strip every paneContent-keyed leaf (both
+    /// git-changes AND diff panes) from the persisted splitTree, since those
+    /// panes are ephemeral and have no real ghostty surface to restore. Also
+    /// pins that the surviving terminal leaf stays focused, not a
+    /// since-stripped pane leaf.
+    @MainActor
+    func test_tab_snapshot_stripsGitChangesAndDiffLeaves() {
+        let terminalLeafID = UUID()
+        let tab = Tab(pwd: "/repo", splitTree: SplitTree(leafID: terminalLeafID))
+        let (treeWithChanges, changesLeafID) = tab.splitTree.insert(at: terminalLeafID, direction: .horizontal)
+        let (treeWithDiff, diffLeafID) = treeWithChanges.insert(at: terminalLeafID, direction: .vertical)
+        tab.splitTree = treeWithDiff
+        tab.paneContent[changesLeafID] = .gitChanges
+        tab.paneContent[diffLeafID] = .diff(source: .unstaged(path: "foo.swift", workDir: "/repo"))
+
+        let snapshot = tab.snapshot()
+        XCTAssertEqual(snapshot.splitTree.allLeafIDs(), [terminalLeafID])
+        XCTAssertEqual(snapshot.splitTree.focusedLeafID, terminalLeafID,
+                       "The persisted tree must not focus a since-stripped pane leaf")
+    }
+
+    /// Edge case Task 5 explicitly decided to allow: a tab made up ENTIRELY
+    /// of pane leaves, with no terminal surface at all. Stripping every
+    /// paneContent-keyed leaf must still produce a sensible (empty)
+    /// snapshot splitTree rather than crash or leave a dangling leaf ID —
+    /// restore-side, `AppDelegate.restoreTabSurfaces` bails on an empty
+    /// `allLeafIDs()` and `fallbackCreateSurface` mints a fresh terminal for
+    /// the tab instead.
+    @MainActor
+    func test_tab_snapshot_ofPaneOnlyTab_producesEmptySplitTree() {
+        let paneLeafID = UUID()
+        let tab = Tab(pwd: "/repo", splitTree: SplitTree(leafID: paneLeafID))
+        tab.paneContent[paneLeafID] = .gitChanges
+
+        let snapshot = tab.snapshot()
+        XCTAssertTrue(snapshot.splitTree.allLeafIDs().isEmpty)
     }
 
     /// Tab(snapshot:) should restore titleOverride from a TabSnapshot.
