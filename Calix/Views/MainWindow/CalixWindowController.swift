@@ -443,10 +443,8 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             guard case .browser = self?.activeTab?.content else { return }
             self?.activeBrowserController?.reload()
         })
-        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Show Git Changes", category: "Git") {
-            // TODO(Task 9): retarget this command to open/focus the active
-            // tab's per-tab changes panel instead of the deleted window-level
-            // Changes sidebar mode.
+        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Toggle Git Changes Panel", category: "Git") { [weak self] in
+            self?.toggleGitChangesPanel()
         })
         commandRegistry.register(PaletteCommand(id: "git.refresh", title: "Refresh Git Changes", category: "Git") { [weak self] in
             self?.gitChangesController.refreshStatus()
@@ -1008,12 +1006,14 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             approvalBannerModel: approvalBannerModel,
             sidebarMode: Binding(
                 get: { [weak self] in self?.windowSession.sidebarMode ?? .tabs },
-                set: { [weak self] in self?.setSidebarMode($0) }
+                set: { [weak self] in self?.windowSession.sidebarMode = $0 }
             ),
-            gitChangesState: windowSession.activeGroup?.activeTab?.gitChangesState ?? .notLoaded,
-            gitEntries: windowSession.activeGroup?.activeTab?.gitEntries ?? [],
-            branchDeltaBase: windowSession.activeGroup?.activeTab?.branchDeltaBase,
-            branchDeltaEntries: windowSession.activeGroup?.activeTab?.branchDeltaEntries ?? [],
+            isGitChangesPanelOpen: gitChangesController.isChangesPanelVisible,
+            showGitChangesButton: {
+                if case .terminal = windowSession.activeGroup?.activeTab?.content { return true }
+                return false
+            }(),
+            onToggleGitChangesPanel: { [weak self] in self?.toggleGitChangesPanel() },
             onTabSelected: { [weak self] tabID in self?.switchToTab(id: tabID) },
             onGroupSelected: { [weak self] groupID in self?.switchToGroup(id: groupID) },
             onNewTab: { [weak self] in self?.createNewTab() },
@@ -1023,9 +1023,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             onTabRenamed: { [weak self] in self?.requestSave() },
             onToggleSidebar: { [weak self] in self?.toggleSidebar() },
             onDismissCommandPalette: { [weak self] in self?.dismissCommandPalette() },
-            onWorkingFileSelected: { [weak self] entry in self?.gitChangesController.handleWorkingFileSelected(entry) },
-            onBranchDeltaFileSelected: { [weak self] entry in self?.gitChangesController.handleBranchDeltaFileSelected(entry) },
-            onRefreshGitStatus: { [weak self] in self?.gitChangesController.refreshStatus() },
             onSidebarWidthChanged: { [weak self] width in self?.windowSession.sidebarWidth = width },
             onCollapseToggled: { [weak self] in self?.requestSave() },
             onCloseAllTabsInGroup: { [weak self] groupID in self?.closeAllTabsInGroup(id: groupID) },
@@ -1189,7 +1186,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         retargetComposeOverlayIfNeeded()
-        if gitChangesController.isSidebarVisible {
+        if gitChangesController.isChangesPanelVisible {
             gitChangesController.refreshStatus()
         }
     }
@@ -1829,11 +1826,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func toggleSidebar() {
         windowSession.showSidebar.toggle()
-        if gitChangesController.isSidebarVisible {
-            gitChangesController.refreshStatus()
-        } else {
-            gitChangesController.stopMonitoring()
-        }
         requestSave()
     }
 
@@ -2993,7 +2985,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         let changed = owningTab.pwd != pwd
         owningTab.pwd = pwd
         requestSave()
-        if changed, owningTab.id == activeTab?.id, gitChangesController.isSidebarVisible {
+        if changed, owningTab.id == activeTab?.id, gitChangesController.isChangesPanelVisible {
             gitChangesController.refreshStatus()
         }
         if changed {
@@ -3622,13 +3614,26 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Git Source Control
 
-    private func setSidebarMode(_ mode: SidebarMode) {
-        windowSession.sidebarMode = mode
-        if gitChangesController.isSidebarVisible {
-            gitChangesController.refreshStatus()
-        } else {
-            gitChangesController.stopMonitoring()
-        }
+    /// Opens/closes the active tab's git-changes panel, for both the
+    /// `git.showChanges` palette command and the tab bar's changes button.
+    ///
+    /// `toggleChangesPanel()`'s own `refresh()` already re-syncs the split
+    /// layout (see `gitChangesController`'s `refresh` closure at the top of
+    /// this file), so all that's left here is AppKit first responder, which
+    /// only this controller owns: on close, AppKit does not retarget first
+    /// responder away from the removed pane's `NSHostingView` on its own --
+    /// the same reason `closePane`/`closeSurfaceAndCleanUp` restore it
+    /// explicitly -- and the terminal would go deaf to keystrokes until
+    /// clicked. `toggleChangesPanel()` leaves `focusedLeafID` naming the
+    /// leaf that should hold focus in both directions, so one restore
+    /// covers open and close alike (a no-op on open, where the terminal
+    /// already has it).
+    private func toggleGitChangesPanel() {
+        gitChangesController.toggleChangesPanel()
+        guard let tab = activeTab,
+              let focusID = tab.splitTree.focusedLeafID,
+              let focusView = tab.registry.view(for: focusID) else { return }
+        window?.makeFirstResponder(focusView)
     }
 
     // MARK: - IPC

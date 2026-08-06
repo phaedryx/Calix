@@ -26,10 +26,12 @@ struct MainContentView: View {
     var approvalBannerModel: ApprovalBannerModel?
 
     @Binding var sidebarMode: SidebarMode
-    var gitChangesState: GitChangesState = .notLoaded
-    var gitEntries: [GitFileEntry] = []
-    var branchDeltaBase: String?
-    var branchDeltaEntries: [BranchDiffEntry] = []
+    /// Active tab's git-changes panel state, for the tab bar's toggle
+    /// button. The panel itself renders as a `.gitChanges` pane inside
+    /// `splitContainerView`, not through this view.
+    var isGitChangesPanelOpen: Bool = false
+    var showGitChangesButton: Bool = false
+    var onToggleGitChangesPanel: (() -> Void)?
 
     var onTabSelected: ((UUID) -> Void)?
     var onGroupSelected: ((UUID) -> Void)?
@@ -40,9 +42,6 @@ struct MainContentView: View {
     var onTabRenamed: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
     var onDismissCommandPalette: (() -> Void)?
-    var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
-    var onRefreshGitStatus: (() -> Void)?
     var onSidebarWidthChanged: ((CGFloat) -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
@@ -121,10 +120,6 @@ struct MainContentView: View {
                         activeGroupID: windowSession.activeGroupID,
                         activeTabID: activeTabID,
                         sidebarMode: $sidebarMode,
-                        gitChangesState: gitChangesState,
-                        gitEntries: gitEntries,
-                        branchDeltaBase: branchDeltaBase,
-                        branchDeltaEntries: branchDeltaEntries,
                         onGroupSelected: onGroupSelected,
                         onTabSelected: onTabSelected,
                         onNewGroup: onNewGroup,
@@ -133,9 +128,6 @@ struct MainContentView: View {
                         onTabRenamed: onTabRenamed,
                         onCollapseToggled: onCollapseToggled,
                         onCloseAllTabsInGroup: onCloseAllTabsInGroup,
-                        onWorkingFileSelected: onWorkingFileSelected,
-                        onBranchDeltaFileSelected: onBranchDeltaFileSelected,
-                        onRefreshGitStatus: onRefreshGitStatus,
                         onMoveTab: onMoveTab,
                         onMoveGroup: onMoveGroup
                     )
@@ -168,7 +160,10 @@ struct MainContentView: View {
                                     ? { from, to in onMoveTab?(activeGroup!.id, from, to) }
                                     : nil,
                                 onTabRenamed: onTabRenamed,
-                                activeGroupID: activeGroup?.id
+                                activeGroupID: activeGroup?.id,
+                                isGitChangesPanelOpen: isGitChangesPanelOpen,
+                                showGitChangesButton: showGitChangesButton,
+                                onToggleGitChangesPanel: onToggleGitChangesPanel
                             )
                         }
 

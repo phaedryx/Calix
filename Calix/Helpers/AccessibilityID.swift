@@ -26,6 +26,7 @@ enum AccessibilityID {
     enum TabBar {
         static let container = "calix.tabBar"
         static let newTabButton = "calix.tabBar.newTabButton"
+        static let gitChangesButton = "calix.tabBar.gitChangesButton"
         static func tab(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString)" }
         static func tabCloseButton(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString).closeButton" }
         static func tabNameTextField(_ id: UUID) -> String { "calix.tabBar.tabNameTextField.\(id.uuidString)" }

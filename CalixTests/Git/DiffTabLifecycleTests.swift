@@ -570,6 +570,172 @@ struct DiffTabLifecycleTests {
         )
     }
 
+    // MARK: - Per-Tab Changes Panel Toggle
+
+    @Test func toggleChangesPanel_insertsAndRemovesGitChangesLeaf() {
+        let tab = Tab(pwd: "/repo")
+        // `Tab.init` defaults to an EMPTY `SplitTree`, so the plan's version
+        // of this test (`tab.splitTree.allLeafIDs()[0]`) would trap on an
+        // out-of-range index, and `toggleChangesPanel()` would have no
+        // anchor leaf to split against. Seed the single terminal leaf every
+        // real tab has by the time any panel can be toggled -- same shape as
+        // `handleWorkingFileSelected_keepsFocusOnTerminalLeaf` above.
+        let terminalLeafID = UUID()
+        tab.splitTree = SplitTree(leafID: terminalLeafID)
+        let session = WindowSession(initialTab: tab)
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        controller.toggleChangesPanel()
+        #expect(tab.splitTree.allLeafIDs().count == 2)
+        let changesLeafID = tab.splitTree.allLeafIDs().first { $0 != terminalLeafID }!
+        #expect(tab.paneContent[changesLeafID] == .gitChanges)
+
+        controller.toggleChangesPanel()
+        #expect(tab.splitTree.allLeafIDs().count == 1)
+        #expect(tab.paneContent.isEmpty)
+    }
+
+    @Test func toggleChangesPanel_repeatedToggling_neverDuplicatesTheLeaf() {
+        let tab = Tab(pwd: "/repo")
+        let terminalLeafID = UUID()
+        tab.splitTree = SplitTree(leafID: terminalLeafID)
+        let session = WindowSession(initialTab: tab)
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        for _ in 0..<3 {
+            controller.toggleChangesPanel()
+            #expect(tab.paneContent.values.filter { $0 == .gitChanges }.count == 1)
+            #expect(tab.splitTree.allLeafIDs().count == 2)
+            controller.toggleChangesPanel()
+            #expect(tab.paneContent.isEmpty)
+            #expect(tab.splitTree.allLeafIDs() == [terminalLeafID])
+        }
+    }
+
+    @Test func toggleChangesPanel_keepsFocusOnTerminalLeaf() {
+        let tab = Tab(pwd: "/repo")
+        let terminalLeafID = UUID()
+        tab.splitTree = SplitTree(leafID: terminalLeafID)
+        let session = WindowSession(initialTab: tab)
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        controller.toggleChangesPanel()
+        // Same reasoning as the diff-pane case: a `.gitChanges` leaf has no
+        // ghostty surface, so `SplitTree.insert`'s default of focusing the
+        // new leaf would make `focusActiveTabImmediately`/
+        // `attemptFocusRestore`/`CockpitAppAccess.listPanes`'s `isFocused`
+        // all wrong until the user clicks back into the terminal.
+        #expect(tab.splitTree.focusedLeafID == terminalLeafID)
+    }
+
+    @Test func toggleChangesPanel_onlyTouchesTheActiveTab() {
+        let tabA = Tab(pwd: "/repo-a")
+        let terminalLeafA = UUID()
+        tabA.splitTree = SplitTree(leafID: terminalLeafA)
+        let tabB = Tab(pwd: "/repo-b")
+        let terminalLeafB = UUID()
+        tabB.splitTree = SplitTree(leafID: terminalLeafB)
+
+        let session = WindowSession(initialTab: tabA)
+        let group = session.activeGroup!
+        group.addTab(tabB)
+        group.activeTabID = tabA.id
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { _ in }, deactivateCurrentTab: {},
+            sendToAgent: { _ in .sent }
+        )
+
+        controller.toggleChangesPanel()
+        #expect(tabA.paneContent.values.contains(.gitChanges))
+        #expect(tabB.paneContent.isEmpty)
+        #expect(controller.isChangesPanelVisible)
+
+        // Panel visibility is a property of the ACTIVE tab's own pane
+        // content -- it must not leak across tabs. This is what gates
+        // background monitoring and the automatic `refreshStatus()` calls
+        // in `CalixWindowController`.
+        group.activeTabID = tabB.id
+        #expect(!controller.isChangesPanelVisible)
+
+        // ...and toggling now affects tabB only, leaving tabA's panel open.
+        controller.toggleChangesPanel()
+        #expect(tabB.paneContent.values.contains(.gitChanges))
+        #expect(tabA.paneContent.values.contains(.gitChanges))
+        #expect(controller.isChangesPanelVisible)
+
+        group.activeTabID = tabA.id
+        #expect(controller.isChangesPanelVisible)
+    }
+
+    @Test func reviewCounts_scopeToTheActiveTabsOwnDiffPanes() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let tabA = Tab(pwd: scratchDirectory.path)
+        tabA.splitTree = SplitTree(leafID: UUID())
+        let tabB = Tab(pwd: scratchDirectory.path)
+        tabB.splitTree = SplitTree(leafID: UUID())
+        let session = WindowSession(initialTab: tabA)
+        let group = session.activeGroup!
+        group.addTab(tabB)
+        group.activeTabID = tabA.id
+
+        let controller = GitChangesController(
+            windowSession: session, refresh: {}, switchToTab: { id in group.activeTabID = id },
+            deactivateCurrentTab: {}, sendToAgent: { _ in .sent }
+        )
+
+        controller.refreshStatus()
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = tabA.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let leavesBefore = Set(tabA.splitTree.allLeafIDs())
+        let entry = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        controller.handleWorkingFileSelected(entry)
+        guard let diffLeafID = tabA.splitTree.allLeafIDs().first(where: { !leavesBefore.contains($0) }) else {
+            Issue.record("Expected a new diff leaf in tabA")
+            return
+        }
+        controller.reviewStore(for: diffLeafID)?.addComment(
+            lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "needs work")
+
+        #expect(controller.reviewFileCount == 1)
+        #expect(controller.totalReviewCommentCount == 1)
+
+        // The counts feed the "Submit All (N in M files)" button label and
+        // the `review.submitAll` availability gate, while
+        // `submitAllDiffReviews()` only ever submits the ACTIVE tab's own
+        // diff panes. From tabB, tabA's comment must be invisible to both.
+        group.activeTabID = tabB.id
+        #expect(controller.reviewFileCount == 0)
+        #expect(controller.totalReviewCommentCount == 0)
+    }
+
     // MARK: - Fixture Helpers
 
     private func makeScratchDirectory() throws -> URL {

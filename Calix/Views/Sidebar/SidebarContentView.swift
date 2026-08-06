@@ -11,10 +11,6 @@ struct SidebarContentView: View {
     let activeGroupID: UUID?
     let activeTabID: UUID?
     @Binding var sidebarMode: SidebarMode
-    var gitChangesState: GitChangesState = .notLoaded
-    var gitEntries: [GitFileEntry] = []
-    var branchDeltaBase: String?
-    var branchDeltaEntries: [BranchDiffEntry] = []
     var onGroupSelected: ((UUID) -> Void)?
     var onTabSelected: ((UUID) -> Void)?
     var onNewGroup: (() -> Void)?
@@ -23,9 +19,6 @@ struct SidebarContentView: View {
     var onTabRenamed: (() -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
-    var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
-    var onRefreshGitStatus: (() -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?
     var onMoveGroup: ((Int, Int) -> Void)?
 

@@ -60,34 +60,51 @@ final class GitChangesController {
         windowSession.activeGroup?.activeTab
     }
 
-    // TODO(Task 10): the window-level Changes sidebar mode this property
-    // used to key off (`showSidebar && sidebarMode == .changes`) was
-    // deleted in Task 8 in favor of the per-tab changes panel (Task 9).
-    // There is currently NO UI surface for git changes at all between
-    // Task 8 and Task 9, so this deliberately hardcodes `false` rather
-    // than widening to `windowSession.showSidebar` -- that would start
-    // background git-status monitoring (startMonitoring/stopMonitoring,
-    // below) for every user with the sidebar open in the default Tabs
-    // mode, a behavior change with no corresponding UI to justify it
-    // (and it caused background monitor tasks to start during plain
-    // WindowSession-constructing unit tests when tried). This also gates
-    // four automatic refreshStatus() call sites in CalixWindowController
-    // (tab activation, toggleSidebar, pwd change, setSidebarMode), so
-    // whoever wires up the new per-tab panel in Task 9 needs a real
-    // implementation here -- not just monitoring -- or the panel will be
-    // stuck on .notLoaded with no data on first activation and no
-    // refresh on `cd`. Task 10 retargets this to key off
-    // `activeTab.paneContent` containing a `.gitChanges` entry instead.
-    var isSidebarVisible: Bool {
-        false
+    /// `true` exactly when the ACTIVE tab has its changes panel open --
+    /// i.e. one of its own `splitTree` leaves is a `.gitChanges` entry in
+    /// its `paneContent`, as put there by `toggleChangesPanel()` below.
+    /// Replaces the window-level `showSidebar && sidebarMode == .changes`
+    /// this used to read, deleted in Task 8 along with that sidebar mode:
+    /// git changes are per-tab now, so another tab's open panel must not
+    /// make this true.
+    ///
+    /// Gates background git-status monitoring (`startMonitoring`/
+    /// `stopMonitoring` below) plus `CalixWindowController`'s automatic
+    /// `refreshStatus()` calls on tab activation and on `cd`. Renamed from
+    /// `isSidebarVisible`, which named a UI concept that no longer exists.
+    var isChangesPanelVisible: Bool {
+        guard let tab = activeTab else { return false }
+        return tab.paneContent.values.contains(.gitChanges)
+    }
+
+    /// The ACTIVE tab's own open diff panes that currently hold
+    /// unsubmitted review comments. Single source of truth for
+    /// `submitAllDiffReviews`/`discardAllDiffReviews` and for the counts
+    /// that label and gate them (`DiffContainerView`'s "Submit All (N in M
+    /// files)" button, the `review.submitAll` palette command's
+    /// `isAvailable`), so the number the user is shown can never disagree
+    /// with the set actually acted on.
+    ///
+    /// Both filters matter: `reviewStores` is keyed by leaf ID but is not
+    /// itself partitioned by tab, and a store can outlive its
+    /// `paneContent` entry, so membership in the active tab's `splitTree`
+    /// alone is not enough.
+    private var activeTabReviewEntries: [(source: DiffSource, store: DiffReviewStore)] {
+        guard let tab = activeTab else { return [] }
+        let tabLeafIDs = Set(tab.splitTree.allLeafIDs())
+        return reviewStores.compactMap { leafID, store in
+            guard tabLeafIDs.contains(leafID), store.hasUnsubmittedComments else { return nil }
+            guard case .diff(let source) = tab.paneContent[leafID] else { return nil }
+            return (source: source, store: store)
+        }
     }
 
     var totalReviewCommentCount: Int {
-        reviewStores.values.filter { $0.hasUnsubmittedComments }.reduce(0) { $0 + $1.comments.count }
+        activeTabReviewEntries.reduce(0) { $0 + $1.store.comments.count }
     }
 
     var reviewFileCount: Int {
-        reviewStores.values.filter { $0.hasUnsubmittedComments }.count
+        activeTabReviewEntries.count
     }
 
     func reviewStore(for tabID: UUID) -> DiffReviewStore? {
@@ -189,14 +206,14 @@ final class GitChangesController {
         if let stopTask = gitMonitorStopTask {
             await stopTask.value
         }
-        guard !Task.isCancelled, isSidebarVisible else { return }
+        guard !Task.isCancelled, isChangesPanelVisible else { return }
 
         let monitor: GitChangesMonitor
         if let existingMonitor = gitChangesMonitor {
             monitor = existingMonitor
         } else {
             monitor = GitChangesMonitor { @MainActor [weak self] _ in
-                guard let self, self.isSidebarVisible else { return }
+                guard let self, self.isChangesPanelVisible else { return }
                 self.refreshStatus(showsLoadingState: false)
             }
             gitChangesMonitor = monitor
@@ -221,6 +238,66 @@ final class GitChangesController {
             }
             await monitor.stop()
         }
+    }
+
+    // MARK: - Changes Panel
+
+    /// Opens or closes the ACTIVE tab's git-changes panel: exactly one
+    /// `.gitChanges` leaf inserted beside (or removed from) that tab's own
+    /// `splitTree`. This is the replacement for the window-level `.changes`
+    /// sidebar mode deleted in Task 8 -- each tab's panel is independent,
+    /// showing that tab's own repo (`Tab.repoRoot`, resolved from its
+    /// `pwd`).
+    ///
+    /// Driven by the `git.showChanges` palette command and the tab bar's
+    /// changes-panel button, both via
+    /// `CalixWindowController.toggleGitChangesPanel()`, which additionally
+    /// re-asserts AppKit first responder afterwards (see its comment).
+    func toggleChangesPanel() {
+        guard let tab = activeTab else { return }
+        // A browser tab renders `BrowserContainerView`, not
+        // `SplitContainerView`, so a pane inserted into its `splitTree`
+        // would be invisible and unclosable.
+        guard case .terminal = tab.content else { return }
+
+        if let existingLeafID = tab.paneContent.first(where: { $0.value == .gitChanges })?.key {
+            tab.paneContent.removeValue(forKey: existingLeafID)
+            // `remove` re-points `focusedLeafID` at the closed leaf's
+            // sibling for us; the caller turns that into an actual
+            // first-responder change.
+            tab.splitTree = tab.splitTree.remove(existingLeafID).tree
+            // `isChangesPanelVisible` is false from here, so the FSEvents
+            // monitor could only fire refreshes that immediately bail --
+            // stop watching instead of leaving the stream alive for the
+            // window's lifetime. `cancelRefresh: false` lets an in-flight
+            // status load finish writing to `tab` harmlessly rather than
+            // being torn down mid-flight.
+            stopMonitoring(cancelRefresh: false)
+        } else {
+            guard let anchorLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first else { return }
+            let (newTree, newLeafID) = tab.splitTree.insert(at: anchorLeafID, direction: .horizontal)
+            tab.splitTree = newTree
+            // Same reasoning as `openDiffTab` below: `insert` focuses the
+            // leaf it just created, but a `.gitChanges` pane has no ghostty
+            // surface, so leaving `focusedLeafID` on it makes
+            // `focusActiveTabImmediately`/`attemptFocusRestore`
+            // (CalixWindowController) and `CockpitAppAccess.listPanes`'s
+            // `isFocused` all wrong until the user clicks the terminal.
+            // When `anchorLeafID` was a fallback for an empty tree, `insert`
+            // built a fresh single-leaf tree instead and there is nothing
+            // else to focus -- leave what `insert` set.
+            if tab.splitTree.allLeafIDs().contains(anchorLeafID) {
+                tab.splitTree.focusedLeafID = anchorLeafID
+            }
+            tab.paneContent[newLeafID] = .gitChanges
+            // Load the panel's data and (re-)arm the monitor the close
+            // branch above stops. `showsLoadingState` only on a tab that
+            // has never resolved its repo: a re-open already has last-good
+            // `gitEntries` cached on the tab, so it refreshes silently in
+            // the background rather than flashing a spinner over them.
+            refreshStatus(showsLoadingState: tab.repoRoot == nil)
+        }
+        refresh()
     }
 
     // MARK: - Diff Tabs
@@ -366,13 +443,7 @@ final class GitChangesController {
     }
 
     func submitAllDiffReviews() {
-        guard let tab = activeTab else { return }
-        let tabLeafIDs = Set(tab.splitTree.allLeafIDs())
-        let entries: [(source: DiffSource, store: DiffReviewStore)] = reviewStores.compactMap { leafID, store in
-            guard tabLeafIDs.contains(leafID), store.hasUnsubmittedComments else { return nil }
-            guard case .diff(let source) = tab.paneContent[leafID] else { return nil }
-            return (source: source, store: store)
-        }
+        let entries = activeTabReviewEntries
         guard !entries.isEmpty else { return }
 
         let payload = DiffReviewStore.formatAllForSubmission(entries)
@@ -389,9 +460,15 @@ final class GitChangesController {
         refresh()
     }
 
+    /// Scoped to the active tab's own diff panes, exactly like
+    /// `submitAllDiffReviews` above -- the button that triggers this lives
+    /// in an active-tab diff pane and is gated on the (now tab-scoped)
+    /// `reviewFileCount`, and the confirmation text below is built from the
+    /// same counts. A window-global discard would report N comments and
+    /// silently destroy more than N.
     func discardAllDiffReviews() {
-        let storesWithComments = reviewStores.values.filter { $0.hasUnsubmittedComments }
-        guard !storesWithComments.isEmpty else { return }
+        let entries = activeTabReviewEntries
+        guard !entries.isEmpty else { return }
 
         let alert = NSAlert()
         alert.messageText = "Discard All Review Comments"
@@ -402,7 +479,7 @@ final class GitChangesController {
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn else { return }
 
-        for store in storesWithComments { store.clearAll() }
+        for entry in entries { entry.store.clearAll() }
         refresh()
     }
 
