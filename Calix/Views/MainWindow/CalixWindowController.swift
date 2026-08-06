@@ -443,10 +443,10 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             guard case .browser = self?.activeTab?.content else { return }
             self?.activeBrowserController?.reload()
         })
-        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Show Git Changes", category: "Git") { [weak self] in
-            self?.windowSession.showSidebar = true
-            self?.setSidebarMode(.changes)
-            self?.refreshHostingView()
+        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Show Git Changes", category: "Git") {
+            // TODO(Task 9): retarget this command to open/focus the active
+            // tab's per-tab changes panel instead of the deleted window-level
+            // Changes sidebar mode.
         })
         commandRegistry.register(PaletteCommand(id: "git.refresh", title: "Refresh Git Changes", category: "Git") { [weak self] in
             self?.gitChangesController.refreshStatus()
@@ -1004,16 +1004,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             commandRegistry: commandRegistry,
             splitContainerView: splitContainerView ?? SplitContainerView(registry: SurfaceRegistry()),
             activeBrowserController: activeBrowserController,
-            // `TabContent.diff`-backed whole-tab diff tabs are no longer
-            // created (see GitChangesController.openDiffTab) -- diffs now
-            // live as `paneContent` leaves inside a tab's `splitTree`,
-            // rendered by `SplitContainerView`/`DiffPaneView` instead.
-            // These three always nil out until Task 8 deletes this
-            // whole-tab-diff rendering path (and `TabContent.diff`) from
-            // `MainContentView` entirely.
-            activeDiffState: nil,
-            activeDiffSource: nil,
-            activeDiffReviewStore: nil,
             recoveryBarModel: recoveryBarModel,
             approvalBannerModel: approvalBannerModel,
             sidebarMode: Binding(
@@ -1054,25 +1044,9 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 self.requestSave()
             },
             onSidebarDragCommitted: { [weak self] in self?.requestSave() },
-            onSubmitReview: { [weak self] in
-                guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.submitDiffReview(leafID: tab.id)
-            },
-            onDiscardReview: { [weak self] in
-                guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.discardReview(leafID: tab.id)
-            },
-            onSubmitAllReviews: { [weak self] in
-                self?.gitChangesController.submitAllDiffReviews()
-            },
-            onDiscardAllReviews: { [weak self] in
-                self?.gitChangesController.discardAllDiffReviews()
-            },
             onComposeOverlaySend: { [weak self] text in self?.sendComposeText(text) ?? false },
             onDismissComposeOverlay: { [weak self] in self?.dismissComposeOverlay() },
-            onComposeOverlayEscapePressed: { [weak self] in self?.forwardEscapeToTerminal() },
-            totalReviewCommentCount: gitChangesController.totalReviewCommentCount,
-            reviewFileCount: gitChangesController.reviewFileCount
+            onComposeOverlayEscapePressed: { [weak self] in self?.forwardEscapeToTerminal() }
         )
     }
 
@@ -1213,8 +1187,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                     self?.window?.makeFirstResponder(bv)
                 }
             }
-        case .diff:
-            break  // Diff tabs don't need special activation
         }
         retargetComposeOverlayIfNeeded()
         if gitChangesController.isSidebarVisible {
@@ -1884,8 +1856,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             if let bv = activeBrowserController?.browserView {
                 window?.makeFirstResponder(bv)
             }
-        case .diff:
-            break
         }
     }
 
@@ -3452,8 +3422,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             if let bv = activeBrowserController?.browserView {
                 window?.makeFirstResponder(bv)
             }
-        } else if case .diff = activeTab?.content {
-            // No special focus needed for diff tabs
         } else {
             focusedController?.setFocus(true)
             restoreFocus()

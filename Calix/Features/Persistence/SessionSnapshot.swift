@@ -245,8 +245,6 @@ extension Tab {
     func snapshot(browserURLOverride: URL? = nil) -> TabSnapshot? {
         let refs = sessionRefs.isEmpty ? nil : sessionRefs
         switch content {
-        case .diff:
-            return nil  // Diff tabs are not persisted
         case .terminal:
             return TabSnapshot(id: id, title: title, titleOverride: titleOverride, pwd: pwd, splitTree: splitTree, browserURL: nil, sessionRefs: refs)
         case .browser(let url):

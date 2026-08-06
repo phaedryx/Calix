@@ -80,32 +80,6 @@ struct SidebarContentView: View {
 
                 Button {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        sidebarMode = .changes
-                    }
-                } label: {
-                    Text("Changes")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background {
-                            if sidebarMode == .changes {
-                                Color.clear
-                                    .overlay { togglePill }
-                                    .matchedGeometryEffect(id: "togglePill", in: togglePillNS)
-                            }
-                        }
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Changes")
-                .accessibilityAddTraits(sidebarMode == .changes ? [.isSelected] : [])
-
-                Button {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         sidebarMode = .agents
                     }
                 } label: {
@@ -139,7 +113,6 @@ struct SidebarContentView: View {
             .accessibilityValue({
                 switch sidebarMode {
                 case .tabs: return "Tabs"
-                case .changes: return "Changes"
                 case .agents: return "Agents"
                 }
             }())
@@ -234,18 +207,6 @@ struct SidebarContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
                 .accessibilityIdentifier(AccessibilityID.Sidebar.newGroupButton)
-
-            case .changes:
-                GitChangesView(
-                    gitChangesState: gitChangesState,
-                    gitEntries: gitEntries,
-                    branchDeltaBase: branchDeltaBase,
-                    branchDeltaEntries: branchDeltaEntries,
-                    onWorkingFileSelected: onWorkingFileSelected,
-                    onBranchDeltaFileSelected: onBranchDeltaFileSelected,
-                    onRefresh: onRefreshGitStatus
-                )
-                .padding(.top, 10)
 
             case .agents:
                 AgentStatusView()
@@ -623,7 +584,6 @@ private struct TabRowItemView: View {
         switch tab.content {
         case .terminal: "terminal"
         case .browser: "globe"
-        case .diff: "doc.text"
         }
     }
 
@@ -754,11 +714,6 @@ private struct TabRowItemView: View {
 extension TabContent {
     var isTerminal: Bool {
         if case .terminal = self { return true }
-        return false
-    }
-
-    var isDiff: Bool {
-        if case .diff = self { return true }
         return false
     }
 }

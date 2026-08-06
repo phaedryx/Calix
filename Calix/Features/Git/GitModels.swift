@@ -10,7 +10,6 @@ import Foundation
 // belongs to the git domain — it just lives here for historical reasons.
 enum SidebarMode: Sendable {
     case tabs
-    case changes
     case agents
 }
 

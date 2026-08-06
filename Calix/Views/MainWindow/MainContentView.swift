@@ -12,9 +12,6 @@ struct MainContentView: View {
     let commandRegistry: CommandRegistry?
     let splitContainerView: SplitContainerView
     var activeBrowserController: BrowserTabController?
-    var activeDiffState: DiffLoadState?
-    var activeDiffSource: DiffSource?
-    var activeDiffReviewStore: DiffReviewStore?
     /// Chrome-style in-app recovery bar (RecoveryBarModel.swift), shown
     /// above the tab bar/pane content as the first child of `body`'s own
     /// top-level `VStack`. `nil` (no existing caller besides
@@ -52,15 +49,9 @@ struct MainContentView: View {
     var onMoveTab: ((UUID, Int, Int) -> Void)?  // (groupID, fromIndex, toIndex)
     var onMoveGroup: ((Int, Int) -> Void)?  // (fromIndex, toIndex)
     var onSidebarDragCommitted: (() -> Void)?
-    var onSubmitReview: (() -> Void)?
-    var onDiscardReview: (() -> Void)?
-    var onSubmitAllReviews: (() -> Void)?
-    var onDiscardAllReviews: (() -> Void)?
     var onComposeOverlaySend: ((String) -> Bool)?
     var onDismissComposeOverlay: (() -> Void)?
     var onComposeOverlayEscapePressed: (() -> Void)?
-    var totalReviewCommentCount: Int = 0
-    var reviewFileCount: Int = 0
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("terminalGlassOpacity") private var glassOpacity = 0.7
@@ -181,48 +172,7 @@ struct MainContentView: View {
                             )
                         }
 
-                        if let diffSource = activeDiffSource, let diffState = activeDiffState {
-                            VStack(spacing: 0) {
-                                DiffToolbarView(
-                                    source: diffSource,
-                                    reviewStore: activeDiffReviewStore,
-                                    onSubmitReview: onSubmitReview,
-                                    onDiscardReview: onDiscardReview,
-                                    totalReviewCommentCount: totalReviewCommentCount,
-                                    reviewFileCount: reviewFileCount,
-                                    onSubmitAllReviews: onSubmitAllReviews,
-                                    onDiscardAllReviews: onDiscardAllReviews
-                                )
-                                switch diffState {
-                                case .loading:
-                                    VStack {
-                                        Spacer()
-                                        ProgressView("Loading diff...")
-                                        Spacer()
-                                    }
-                                case .success(let diff):
-                                    DiffGlassContentView(
-                                        diff: diff,
-                                        reduceTransparency: reduceTransparency,
-                                        glassOpacity: glassOpacity,
-                                        reviewStore: activeDiffReviewStore
-                                    )
-                                        .accessibilityIdentifier(AccessibilityID.Diff.content)
-                                case .error(let message):
-                                    VStack(spacing: 12) {
-                                        Spacer()
-                                        Image(systemName: "exclamationmark.triangle")
-                                            .font(.largeTitle)
-                                            .foregroundStyle(.secondary)
-                                        Text(message)
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .glassEffect(.clear.tint(Color(nsColor: GlassTheme.chromeTint(for: themeColor, glassOpacity: glassOpacity))), in: .rect)
-                            .accessibilityIdentifier(AccessibilityID.Diff.container)
-                        } else if let browserController = activeBrowserController {
+                        if let browserController = activeBrowserController {
                             BrowserContainerView(controller: browserController)
                         } else {
                             VStack(spacing: 0) {

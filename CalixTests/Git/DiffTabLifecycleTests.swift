@@ -69,8 +69,8 @@ struct DiffTabLifecycleTests {
     @Test func sidebarModeToggle() {
         let session = WindowSession()
         #expect(session.sidebarMode == .tabs)
-        session.sidebarMode = .changes
-        #expect(session.sidebarMode == .changes)
+        session.sidebarMode = .agents
+        #expect(session.sidebarMode == .agents)
         session.sidebarMode = .tabs
         #expect(session.sidebarMode == .tabs)
     }

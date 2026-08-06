@@ -60,8 +60,21 @@ final class GitChangesController {
         windowSession.activeGroup?.activeTab
     }
 
+    // TODO(Task 10): the window-level Changes sidebar mode this property
+    // used to key off (`showSidebar && sidebarMode == .changes`) was
+    // deleted in Task 8 in favor of the per-tab changes panel (Task 9).
+    // There is currently NO UI surface for git changes at all between
+    // Task 8 and Task 9, so this deliberately hardcodes `false` rather
+    // than widening to `windowSession.showSidebar` -- that would start
+    // background git-status monitoring (startMonitoring/stopMonitoring,
+    // below) for every user with the sidebar open in the default Tabs
+    // mode, a behavior change with no corresponding UI to justify it
+    // (and it caused background monitor tasks to start during plain
+    // WindowSession-constructing unit tests when tried). Task 10
+    // retargets this to key off `activeTab.paneContent` containing a
+    // `.gitChanges` entry instead.
     var isSidebarVisible: Bool {
-        windowSession.showSidebar && windowSession.sidebarMode == .changes
+        false
     }
 
     var totalReviewCommentCount: Int {
