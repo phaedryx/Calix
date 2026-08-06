@@ -264,6 +264,81 @@ struct DiffTabLifecycleTests {
         #expect(storedSource == source)
     }
 
+    @Test func sendReviewToAgent_onlySearchesActiveTabsOwnTerminalLeaves() {
+        // This test targets the pure selection logic moved onto GitChangesController
+        // in this task -- see Step 3 for the exact function under test.
+        let tab = Tab()
+        let terminalLeafA = UUID()
+        let terminalLeafB = UUID()
+        tab.splitTree = SplitTree(leafID: terminalLeafA)
+        (tab.splitTree, _) = tab.splitTree.insert(at: terminalLeafA, direction: .vertical, newID: terminalLeafB)
+        // Neither leaf is in tab.paneContent -- both resolve as terminal surfaces.
+        let terminalLeaves = tab.splitTree.allLeafIDs().filter { tab.paneContent[$0] == nil }
+        #expect(Set(terminalLeaves) == Set([terminalLeafA, terminalLeafB]))
+    }
+
+    // Regression test for the bug this task actually fixes: since Task 4,
+    // diffs are `paneContent[leafID] == .diff(source:)` entries on a
+    // `.terminal` tab, not a tab whose whole `content` is `.diff`. Before
+    // this task, `submitDiffReview` still read `tab.content`, so this
+    // guard always failed and submission was a silent no-op. This proves
+    // the file path is read from `paneContent` and the review store is
+    // actually cleared on a successful send.
+    @Test func submitDiffReview_readsPaneContentAndClearsStoreOnSend() async throws {
+        let scratchDirectory = try makeScratchDirectory()
+        defer { try? FileManager.default.removeItem(at: scratchDirectory) }
+        try runGit(["init", "-q", "-b", "main", scratchDirectory.path], in: scratchDirectory)
+        try "one\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+        try runGit(["add", "-A"], in: scratchDirectory)
+        try runGit(["commit", "-q", "-m", "base"], in: scratchDirectory)
+        try "one-changed\n".write(to: scratchDirectory.appendingPathComponent("one.txt"), atomically: true, encoding: .utf8)
+
+        let terminalTab = Tab(pwd: scratchDirectory.path)
+        let session = WindowSession(initialTab: terminalTab)
+        let group = session.activeGroup!
+
+        var capturedPayload: String?
+        let controller = GitChangesController(
+            windowSession: session,
+            refresh: {},
+            switchToTab: { id in group.activeTabID = id },
+            deactivateCurrentTab: {},
+            sendToAgent: { payload in
+                capturedPayload = payload
+                return .sent
+            }
+        )
+
+        controller.refreshStatus()
+        let deadline = ContinuousClock.now + Duration.seconds(5)
+        while true {
+            if case .loaded = terminalTab.gitChangesState { break }
+            guard ContinuousClock.now < deadline else {
+                Issue.record("Timed out waiting for git status load")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        let leavesBefore = Set(terminalTab.splitTree.allLeafIDs())
+        let entry = GitFileEntry(path: "one.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)
+        controller.handleWorkingFileSelected(entry)
+        guard let diffLeafID = terminalTab.splitTree.allLeafIDs().first(where: { !leavesBefore.contains($0) }) else {
+            Issue.record("Expected a new diff leaf to be inserted")
+            return
+        }
+
+        controller.reviewStore(for: diffLeafID)?.addComment(
+            lineIndex: 0, lineNumber: 1, oldLineNumber: nil, lineType: .addition, text: "looks good")
+        #expect(controller.reviewStore(for: diffLeafID)?.hasUnsubmittedComments == true)
+
+        controller.submitDiffReview(leafID: diffLeafID)
+
+        #expect(capturedPayload?.contains("one.txt") == true)
+        #expect(capturedPayload?.contains("looks good") == true)
+        #expect(controller.reviewStore(for: diffLeafID)?.hasUnsubmittedComments == false)
+    }
+
     @Test func handleWorkingFileSelected_insertsLeafIntoActiveTabSplitTree() async throws {
         let scratchDirectory = try makeScratchDirectory()
         defer { try? FileManager.default.removeItem(at: scratchDirectory) }

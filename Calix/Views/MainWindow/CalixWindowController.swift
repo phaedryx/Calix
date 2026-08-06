@@ -1056,7 +1056,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             onSidebarDragCommitted: { [weak self] in self?.requestSave() },
             onSubmitReview: { [weak self] in
                 guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.submitDiffReview(tabID: tab.id)
+                self.gitChangesController.submitDiffReview(leafID: tab.id)
             },
             onDiscardReview: { [weak self] in
                 guard let self, let tab = self.activeTab else { return }
@@ -1150,7 +1150,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
             container.onRefreshGitChanges = { [weak self] in self?.gitChangesController.refreshStatus() }
             container.onSubmitReview = { [weak self] leafID in
-                self?.gitChangesController.submitDiffReview(tabID: leafID)
+                self?.gitChangesController.submitDiffReview(leafID: leafID)
             }
             container.onDiscardReview = { [weak self] leafID in
                 self?.gitChangesController.discardReview(leafID: leafID)
@@ -3792,7 +3792,10 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     /// Returns true if a terminal tab title indicates it is running one of the
     /// supported AI agents (Claude Code, Codex, OpenCode, Hermes). Centralizes
-    /// the title-substring check used by both compose and review send paths.
+    /// the title-substring check used by the compose-overlay send path
+    /// (`sendComposeText`) to decide paste timing (double- vs single-Enter).
+    /// NOT used by `sendReviewToAgent` -- review submission always targets a
+    /// terminal leaf in the active tab regardless of its title (see below).
     /// Keep the agent list in sync with `IPCConfigResult` axes.
     private static func isAIAgentTitle(_ title: String) -> Bool {
         title.localizedCaseInsensitiveContains("claude") ||
@@ -3801,59 +3804,49 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         title.localizedCaseInsensitiveContains("hermes")
     }
 
+    /// Sends a review payload to a terminal pane in the *active tab* --
+    /// never a cross-tab/cross-group search. Diff panes and the terminal
+    /// they're reviewing always live together as leaves in the same tab's
+    /// `splitTree` (Task 4), so the only ambiguity left is which terminal
+    /// leaf to target when the tab has more than one.
     private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
-        // Find terminal tabs running a supported AI agent.
-        let agentTabs = windowSession.groups.flatMap(\.tabs).filter {
-            guard case .terminal = $0.content else { return false }
-            return Self.isAIAgentTitle($0.title)
-        }
+        guard let tab = activeTab else { return .failed }
+        let terminalLeaves = tab.splitTree.allLeafIDs().filter { tab.paneContent[$0] == nil }
 
-        guard !agentTabs.isEmpty else {
-            showIPCAlert(title: "No AI Agent", message: "No terminal tabs running Claude Code, Codex, OpenCode, or Hermes found. Start an AI agent first.")
+        guard !terminalLeaves.isEmpty else {
+            showIPCAlert(title: "No Terminal", message: "This tab has no terminal pane to send the review to.")
             return .failed
         }
 
-        // Select target tab
-        let targetTab: Tab
-        if agentTabs.count == 1 {
-            targetTab = agentTabs[0]
+        let targetLeafID: UUID
+        if terminalLeaves.count == 1 {
+            targetLeafID = terminalLeaves[0]
         } else {
             let alert = NSAlert()
-            alert.messageText = "Select AI Agent Tab"
-            alert.informativeText = "Choose which AI agent instance to send the review to:"
+            alert.messageText = "Select Terminal Pane"
+            alert.informativeText = "This tab has multiple terminal panes -- choose which one to send the review to:"
             alert.addButton(withTitle: "Send")
             alert.addButton(withTitle: "Cancel")
 
             let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-            for (i, tab) in agentTabs.enumerated() {
-                let groupName = windowSession.groups.first { $0.tabs.contains { $0.id == tab.id } }?.name ?? ""
-                let label = "\(tab.titleOverride ?? tab.title) — \(groupName) (#\(i + 1))"
-                popup.addItem(withTitle: label)
+            for (i, leafID) in terminalLeaves.enumerated() {
+                popup.addItem(withTitle: "Pane #\(i + 1)")
+                popup.lastItem?.representedObject = leafID
             }
             alert.accessoryView = popup
 
-            let response = alert.runModal()
-            guard response == .alertFirstButtonReturn else { return .cancelled }
-
-            let selectedIndex = popup.indexOfSelectedItem
-            guard selectedIndex >= 0, selectedIndex < agentTabs.count else { return .failed }
-            targetTab = agentTabs[selectedIndex]
+            guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
+            guard let selected = popup.selectedItem?.representedObject as? UUID else { return .failed }
+            targetLeafID = selected
         }
 
-        // Send review text to terminal PTY via ghostty surface
-        guard let focusedID = targetTab.splitTree.focusedLeafID,
-              let controller = targetTab.registry.controller(for: focusedID) else {
+        guard let controller = tab.registry.controller(for: targetLeafID) else {
             showIPCAlert(title: "Send Failed", message: "Could not access terminal surface.")
             return .failed
         }
 
         controller.sendText(payload)
-        // Send Enter twice: first to confirm paste, second to submit
         sendSyntheticReturn(controller: controller, double: true)
-
-        // Switch to the target terminal tab
-        switchToTab(id: targetTab.id)
-
         return .sent
     }
 

@@ -330,12 +330,9 @@ final class GitChangesController {
 
     // MARK: - Review Submission
 
-    func submitDiffReview(tabID: UUID) {
-        guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
-
-        // Get file path from tab
-        guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
-              case .diff(let source) = tab.content else { return }
+    func submitDiffReview(leafID: UUID) {
+        guard let tab = activeTab, let store = reviewStores[leafID], store.hasUnsubmittedComments else { return }
+        guard case .diff(let source) = tab.paneContent[leafID] else { return }
         let filePath: String
         switch source {
         case .unstaged(let p, _), .staged(let p, _), .branchDelta(let p, _, _), .untracked(let p, _):
@@ -344,7 +341,6 @@ final class GitChangesController {
 
         let payload = store.formatForSubmission(filePath: filePath)
         let result = sendToAgent(payload)
-
         if result == .sent {
             store.clearAll()
             refresh()
@@ -352,18 +348,17 @@ final class GitChangesController {
     }
 
     func submitAllDiffReviews() {
-        // Collect all review stores with comments, paired with their DiffSource
-        let entries: [(source: DiffSource, store: DiffReviewStore)] = reviewStores.compactMap { tabID, store in
-            guard store.hasUnsubmittedComments else { return nil }
-            guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
-                  case .diff(let source) = tab.content else { return nil }
+        guard let tab = activeTab else { return }
+        let tabLeafIDs = Set(tab.splitTree.allLeafIDs())
+        let entries: [(source: DiffSource, store: DiffReviewStore)] = reviewStores.compactMap { leafID, store in
+            guard tabLeafIDs.contains(leafID), store.hasUnsubmittedComments else { return nil }
+            guard case .diff(let source) = tab.paneContent[leafID] else { return nil }
             return (source: source, store: store)
         }
         guard !entries.isEmpty else { return }
 
         let payload = DiffReviewStore.formatAllForSubmission(entries)
         let result = sendToAgent(payload)
-
         if result == .sent {
             for entry in entries { entry.store.clearAll() }
             refresh()
