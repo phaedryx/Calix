@@ -22,11 +22,6 @@ class WindowSession: Identifiable {
     var composeOverlayHeight: CGFloat = 120
     var composeOverlayText: String = ""
     var sidebarMode: SidebarMode = .tabs
-    var gitChangesState: GitChangesState = .notLoaded
-    var gitEntries: [GitFileEntry] = []
-    var branchDeltaBase: String?
-    var branchDeltaEntries: [BranchDiffEntry] = []
-    var repoRoots: [String: String] = [:]
     var sidebarWidth: CGFloat = SidebarLayout.defaultWidth
 
     static let minSidebarWidth: CGFloat = SidebarLayout.minWidth

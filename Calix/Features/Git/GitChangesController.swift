@@ -39,15 +39,6 @@ final class GitChangesController {
     private var gitChangesMonitor: GitChangesMonitor?
     private var gitMonitorStopTask: Task<Void, Never>?
     private var reviewStores: [UUID: DiffReviewStore] = [:]
-    /// The work tree the currently-loaded `gitEntries`/`branchDeltaEntries`
-    /// sidebar content actually belongs to, set whenever `refreshStatus()` loads
-    /// successfully. File selection must key off this -- not `findWorkDir()`
-    /// -- once a diff tab is active: `findWorkDir()`
-    /// falls back to "any terminal tab in the group" when the active tab
-    /// isn't a terminal, which can pick a DIFFERENT terminal tab than the
-    /// one the sidebar's contents came from and silently resolve every
-    /// subsequent click against the wrong repo (empty diffs, no error).
-    private var currentRepoRoot: String?
 
     init(
         windowSession: WindowSession,
@@ -106,17 +97,18 @@ final class GitChangesController {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             guard let self else { return }
+            guard let tab = self.activeTab else { return }
 
             let workDir = self.findWorkDir()
             guard let workDir else {
                 self.stopMonitoring(cancelRefresh: false)
-                self.windowSession.gitChangesState = .error("No working directory found")
+                tab.gitChangesState = .error("No working directory found")
                 self.refresh()
                 return
             }
 
             if showsLoadingState {
-                self.windowSession.gitChangesState = .loading
+                tab.gitChangesState = .loading
                 self.refresh()
             }
 
@@ -124,8 +116,7 @@ final class GitChangesController {
                 let repository = try await GitService.repositoryLocation(workDir: workDir)
                 guard !Task.isCancelled else { return }
 
-                self.windowSession.repoRoots[workDir] = repository.workTree
-                self.currentRepoRoot = repository.workTree
+                tab.repoRoot = repository.workTree
                 await self.startMonitoring(repository: repository)
                 guard !Task.isCancelled else { return }
 
@@ -143,24 +134,24 @@ final class GitChangesController {
                 let (entries, delta) = try await (statusResult, deltaResult)
                 guard !Task.isCancelled else { return }
 
-                self.windowSession.gitEntries = entries
-                self.windowSession.branchDeltaBase = delta.base
-                self.windowSession.branchDeltaEntries = delta.entries
-                self.windowSession.gitChangesState = .loaded
+                tab.gitEntries = entries
+                tab.branchDeltaBase = delta.base
+                tab.branchDeltaEntries = delta.entries
+                tab.gitChangesState = .loaded
                 self.refresh()
             } catch let error as GitService.GitError {
                 guard !Task.isCancelled else { return }
                 self.stopMonitoring(cancelRefresh: false)
                 if case .notARepository = error {
-                    self.windowSession.gitChangesState = .notRepository
+                    tab.gitChangesState = .notRepository
                 } else {
-                    self.windowSession.gitChangesState = .error(error.localizedDescription)
+                    tab.gitChangesState = .error(error.localizedDescription)
                 }
                 self.refresh()
             } catch {
                 guard !Task.isCancelled else { return }
                 self.stopMonitoring(cancelRefresh: false)
-                self.windowSession.gitChangesState = .error(error.localizedDescription)
+                tab.gitChangesState = .error(error.localizedDescription)
                 self.refresh()
             }
         }
@@ -217,7 +208,7 @@ final class GitChangesController {
     // MARK: - Diff Tabs
 
     func handleWorkingFileSelected(_ entry: GitFileEntry) {
-        guard let repoRoot = currentRepoRoot else { return }
+        guard let repoRoot = activeTab?.repoRoot else { return }
 
         let source: DiffSource
         if entry.isStaged {
@@ -232,7 +223,7 @@ final class GitChangesController {
     }
 
     func handleBranchDeltaFileSelected(_ entry: BranchDiffEntry) {
-        guard let repoRoot = currentRepoRoot, let base = windowSession.branchDeltaBase else { return }
+        guard let repoRoot = activeTab?.repoRoot, let base = activeTab?.branchDeltaBase else { return }
 
         let source: DiffSource = .branchDelta(path: entry.path, base: base, workDir: repoRoot)
         openDiffTab(source: source)
@@ -311,28 +302,7 @@ final class GitChangesController {
     }
 
     private func findWorkDir() -> String? {
-        // 1. Active terminal tab's pwd
-        if let tab = activeTab, case .terminal = tab.content, let pwd = tab.pwd {
-            return pwd
-        }
-        // 2. Any terminal tab in same group
-        if let group = windowSession.activeGroup {
-            for tab in group.tabs {
-                if case .terminal = tab.content, let pwd = tab.pwd {
-                    return pwd
-                }
-            }
-        }
-        // 3. Any terminal tab in any group
-        for group in windowSession.groups {
-            for tab in group.tabs {
-                if case .terminal = tab.content, let pwd = tab.pwd {
-                    return pwd
-                }
-            }
-        }
-        // 4. Fallback from cached repo roots
-        return windowSession.repoRoots.values.first
+        activeTab?.pwd
     }
 
     // MARK: - Review Submission

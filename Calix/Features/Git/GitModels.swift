@@ -14,7 +14,7 @@ enum SidebarMode: Sendable {
     case agents
 }
 
-enum GitChangesState: Sendable {
+enum GitChangesState: Sendable, Equatable {
     case notLoaded
     case notRepository
     case loading

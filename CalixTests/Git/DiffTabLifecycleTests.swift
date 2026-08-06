@@ -10,39 +10,59 @@ import Testing
 @MainActor
 struct DiffTabLifecycleTests {
     @Test func gitChangesStateTransitions() {
-        let session = WindowSession()
-        if case .notLoaded = session.gitChangesState {} else {
+        let tab = Tab()
+        if case .notLoaded = tab.gitChangesState {} else {
             Issue.record("Expected initial state .notLoaded")
         }
 
-        session.gitChangesState = .loading
-        if case .loading = session.gitChangesState {} else {
+        tab.gitChangesState = .loading
+        if case .loading = tab.gitChangesState {} else {
             Issue.record("Expected .loading")
         }
 
-        session.gitChangesState = .loaded
-        if case .loaded = session.gitChangesState {} else {
+        tab.gitChangesState = .loaded
+        if case .loaded = tab.gitChangesState {} else {
             Issue.record("Expected .loaded")
         }
     }
 
     @Test func gitChangesStateNotRepository() {
-        let session = WindowSession()
-        session.gitChangesState = .loading
-        session.gitChangesState = .notRepository
-        if case .notRepository = session.gitChangesState {} else {
+        let tab = Tab()
+        tab.gitChangesState = .loading
+        tab.gitChangesState = .notRepository
+        if case .notRepository = tab.gitChangesState {} else {
             Issue.record("Expected .notRepository")
         }
     }
 
     @Test func gitChangesStateError() {
-        let session = WindowSession()
-        session.gitChangesState = .error("test error")
-        if case .error(let msg) = session.gitChangesState {
+        let tab = Tab()
+        tab.gitChangesState = .error("test error")
+        if case .error(let msg) = tab.gitChangesState {
             #expect(msg == "test error")
         } else {
             Issue.record("Expected .error")
         }
+    }
+
+    @Test func gitChangesState_livesOnTab_notWindowSession() {
+        let tab = Tab()
+        #expect(tab.gitChangesState == .notLoaded)
+        tab.gitChangesState = .loading
+        #expect(tab.gitChangesState == .loading)
+    }
+
+    @Test func twoTabs_haveIndependentGitChangesState() {
+        let tabA = Tab(pwd: "/repo-a")
+        let tabB = Tab(pwd: "/repo-b")
+        let session = WindowSession(initialTab: tabA)
+        session.activeGroup!.addTab(tabB)
+
+        tabA.gitChangesState = .loaded
+        tabA.gitEntries = [GitFileEntry(path: "a.txt", origPath: nil, status: .modified, isStaged: false, renameScore: nil)]
+
+        #expect(tabB.gitChangesState == .notLoaded)
+        #expect(tabB.gitEntries.isEmpty)
     }
 
     @Test func sidebarModeToggle() {
@@ -116,9 +136,9 @@ struct DiffTabLifecycleTests {
         controller.refreshStatus()
         let statusDeadline = ContinuousClock.now + Duration.seconds(5)
         while true {
-            if case .loaded = session.gitChangesState { break }
+            if case .loaded = terminalTab.gitChangesState { break }
             guard ContinuousClock.now < statusDeadline else {
-                Issue.record("Timed out waiting for initial git status load, state: \(session.gitChangesState)")
+                Issue.record("Timed out waiting for initial git status load, state: \(terminalTab.gitChangesState)")
                 return
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -136,6 +156,12 @@ struct DiffTabLifecycleTests {
         }
         try await waitForDiffState(controller: controller, group: group, tabID: tab1.id)
 
+        // Per-tab repoRoot means only the terminal tab that actually loaded
+        // git status carries a resolved repoRoot -- switch back to it before
+        // selecting the next file, mirroring how the (Task 9) per-tab panel
+        // will keep the changes list scoped to its own originating tab
+        // rather than to whatever tab happens to be active.
+        group.activeTabID = terminalTab.id
         controller.handleWorkingFileSelected(entry2)
         guard let tab2 = group.tabs.last, tab2.id != tab1.id else {
             Issue.record("Expected second diff tab to be created")
@@ -202,17 +228,12 @@ struct DiffTabLifecycleTests {
             sendToAgent: { _ in .sent }
         )
 
-        // Simulate the user having looked at Changes earlier while `otherTab`
-        // was active, which is how `windowSession.repoRoots[otherRepo.path]`
-        // would have gotten populated in the real app.
-        session.repoRoots[otherRepo.path] = otherRepo.path
-
         controller.refreshStatus()
         let statusDeadline = ContinuousClock.now + Duration.seconds(5)
         while true {
-            if case .loaded = session.gitChangesState { break }
+            if case .loaded = realRepoTab.gitChangesState { break }
             guard ContinuousClock.now < statusDeadline else {
-                Issue.record("Timed out waiting for initial git status load, state: \(session.gitChangesState)")
+                Issue.record("Timed out waiting for initial git status load, state: \(realRepoTab.gitChangesState)")
                 return
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -238,9 +259,14 @@ struct DiffTabLifecycleTests {
         #expect(workDir1.hasSuffix(realRepo.lastPathComponent), "tab1 should resolve the real repo (active terminal tab)")
         #expect(!diff1.lines.isEmpty)
 
-        // Active tab is now the diff tab, not a terminal tab -- this is the
-        // moment `findWorkDir()` falls through to "any terminal tab in the
-        // same group" and can pick the WRONG one.
+        // `repoRoot` now lives on `realRepoTab` itself, not on a
+        // window-level cache keyed by workDir -- so re-activating
+        // `realRepoTab` (the tab that actually loaded git status) before
+        // the next selection resolves unambiguously to its own repo,
+        // regardless of `otherTab` sitting earlier in `group.tabs`. This
+        // is the structural fix for the old fallback-across-tabs bug: there
+        // is no shared cache left for `otherTab` to have poisoned.
+        group.activeTabID = realRepoTab.id
         controller.handleWorkingFileSelected(entry2)
         guard let tab2 = group.tabs.last, tab2.id != tab1.id else {
             Issue.record("Expected second diff tab to be created")
@@ -255,7 +281,7 @@ struct DiffTabLifecycleTests {
         }
         #expect(
             workDir2 == workDir1,
-            "BUG: tab2 resolved workDir \(workDir2), not tab1's repo \(workDir1) -- findWorkDir() fell through to the wrong terminal tab"
+            "tab2 resolved workDir \(workDir2), not tab1's repo \(workDir1) -- per-tab repoRoot should make this impossible even with otherTab earlier in group.tabs"
         )
         guard case .success(let diff2) = controller.activeDiffState else {
             Issue.record("Expected tab2 .success, got \(String(describing: controller.activeDiffState))")
@@ -263,7 +289,7 @@ struct DiffTabLifecycleTests {
         }
         #expect(
             !diff2.lines.isEmpty,
-            "BUG REPRODUCED: tab2's diff is empty (blank content, correct title) because it ran against the wrong repo's workDir"
+            "tab2's diff is empty (blank content, correct title) -- it ran against the wrong repo's workDir"
         )
     }
 
