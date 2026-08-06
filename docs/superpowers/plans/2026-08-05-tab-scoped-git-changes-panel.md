@@ -1529,22 +1529,13 @@ Confirm every remaining test reflects the new model: no test still asserts
 (all deleted in Task 7); the file's fixture helpers (`makeScratchDirectory`,
 `runGit`, `waitForDiffState`) are still used consistently.
 
-- [ ] **Step 2: Add the same-tab multi-terminal picker test named in the spec**
+- [ ] **Step 2: Confirm the same-tab multi-terminal picker test from Task 7 is present and not duplicated**
 
-```swift
-@Test func sendReviewToAgent_multipleTerminalLeavesInTab_targetsOnlyThisTabsPanes() {
-    let tab = Tab()
-    let leafA = UUID()
-    let leafB = UUID()
-    tab.splitTree = SplitTree(leafID: leafA)
-    (tab.splitTree, _) = tab.splitTree.insert(at: leafA, direction: .vertical, newID: leafB)
-    // Both leafA and leafB are terminal (absent from paneContent) -- confirms
-    // the candidate set for the picker never needs to look outside this tab,
-    // unlike the deleted cross-group agentTabCandidates.
-    let candidates = tab.splitTree.allLeafIDs().filter { tab.paneContent[$0] == nil }
-    #expect(Set(candidates) == Set([leafA, leafB]))
-}
-```
+Task 7 Step 1 already added
+`sendReviewToAgent_onlySearchesActiveTabsOwnTerminalLeaves`, which covers
+this exact scenario (a tab with two terminal leaves, confirming the
+candidate set never looks outside the tab). Confirm it's still present and
+passing — do not add a second, near-identical test for the same assertion.
 
 - [ ] **Step 3: Run the full suite**
 
