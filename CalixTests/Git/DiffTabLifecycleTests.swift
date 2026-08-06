@@ -134,6 +134,43 @@ struct DiffTabLifecycleTests {
         #expect(closingTab.paneContent[diffLeafID] == nil)
     }
 
+    // Review finding on Task 5: closing a tab's only terminal (`exit`
+    // in the shell) leaves the tab open showing just its diff pane (see
+    // this file's own carried-forward-item-3 decision in the task
+    // report -- that's deliberate). But closing THAT diff pane via its
+    // own close button used to leave `tab.splitTree` fully empty with
+    // no code path removing the tab: no terminal, no pane, no
+    // focusable leaf, and no in-place way to revive it (only `Cmd+W`
+    // could close it). `closePane` now detects the resulting empty
+    // tree and hands off to `closeTab(id:)` (same path `Cmd+W` uses,
+    // which already gates on `confirmQuitBeforeCloseIfWouldTerminate()`).
+    // This proves the tab is actually gone afterward, not lingering.
+    @Test func closePane_lastLeafInTab_closesTheTabInstead() {
+        let diffLeafID = UUID()
+        let closingTab = Tab(title: "Closing")
+        // Simulates the post-`exit` state: the tab's only terminal
+        // surface is already gone, so the diff pane is the sole leaf
+        // left in splitTree.
+        closingTab.splitTree = SplitTree(leafID: diffLeafID)
+        closingTab.paneContent[diffLeafID] = .diff(source: .unstaged(path: "one.txt", workDir: "/repo"))
+
+        let otherTab = Tab(title: "Other")
+        let group = TabGroup(name: "Default", tabs: [closingTab, otherTab], activeTabID: otherTab.id)
+        let session = WindowSession(groups: [group], activeGroupID: group.id)
+        let window = CalixWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        let controller = CalixWindowController(window: window, windowSession: session, restoring: true)
+
+        controller._closePaneForTesting(leafID: diffLeafID)
+
+        #expect(!group.tabs.contains(where: { $0.id == closingTab.id }), "the leafless tab should be closed, not left lingering")
+        #expect(group.tabs.contains(where: { $0.id == otherTab.id }))
+    }
+
     @Test func tabPaneContent_defaultsEmpty_andStoresPaneKinds() {
         let tab = Tab()
         #expect(tab.paneContent.isEmpty)

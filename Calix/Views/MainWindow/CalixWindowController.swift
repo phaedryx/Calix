@@ -2329,21 +2329,43 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    /// Closes ONE changes-list/diff pane (a `paneContent` leaf) without
-    /// touching the rest of `tab` -- the non-terminal counterpart to
-    /// `closeSurfaceAndCleanUp`'s single-surface close. Deliberately has
-    /// no "did that leave the tab empty, so remove the tab too" branch
-    /// to mirror `closeSurfaceAndCleanUp`'s own: a pane leaf CAN be the
-    /// only leaf left in `tab.splitTree` (e.g. the tab's last terminal
-    /// surface already exited while this pane was open -- see
-    /// `closeSurfaceAndCleanUp`'s own doc comment on that state), but
-    /// routing this pane's close button through the same
-    /// window-closing path `closeSurfaceAndCleanUp` uses would skip
-    /// `confirmQuitBeforeCloseIfWouldTerminate()` entirely. So closing
-    /// that last remaining pane here just leaves a leafless-but-still-
-    /// open tab -- the same "empty" state a plain `Cmd+W`/
-    /// `closeTab(id:)` already handles correctly, with its own
-    /// confirm-quit gate intact.
+    /// Closes ONE changes-list/diff pane (a `paneContent` leaf) --
+    /// the non-terminal counterpart to `closeSurfaceAndCleanUp`'s
+    /// single-surface close. A pane leaf CAN be the only leaf left in
+    /// `tab.splitTree` (e.g. the tab's last terminal surface already
+    /// exited while this pane was open -- see `closeSurfaceAndCleanUp`'s
+    /// own doc comment on that state); closing it here would otherwise
+    /// leave a leafless, unfocusable tab that lingers in the tab strip
+    /// with nothing to show and no in-place way to revive it (every
+    /// `splitCurrentSurface`-style entry point bails when
+    /// `focusedLeafID` is nil).
+    ///
+    /// So when removing this leaf empties `tab.splitTree`, this method
+    /// hands off to `closeTab(id:)` (the same path `Cmd+W` uses)
+    /// instead of leaving that tab behind. This is NOT the same
+    /// "would skip the quit-confirmation gate" concern that keeps
+    /// `closeSurfaceAndCleanUp`'s own empty-tree branch from doing the
+    /// same: `closeSurfaceAndCleanUp` inlines its own
+    /// `windowSession.removeTab` call for a process-initiated close
+    /// (a shell exiting can't be gated behind a user-facing "quit?"
+    /// prompt), but `closeTab(id:)` -- a *user*-initiated close, same
+    /// as this pane's close button -- already runs
+    /// `confirmQuitBeforeCloseIfWouldTerminate()` before touching
+    /// anything (see its own body, guard above the unsent-review
+    /// check). Routing through it is therefore safe even for the last
+    /// pane in the last tab of the last window. (An earlier version of
+    /// this comment claimed the opposite -- that reusing a window-
+    /// closing path here would skip that gate entirely -- which was
+    /// wrong: `closeTab(id:)` has always had it.)
+    ///
+    /// The unsent-review-comment check just below covers the leaf being
+    /// closed here; `closeTab(id:)`'s own check further down is
+    /// separately (and currently incorrectly) keyed by tab id against
+    /// the leaf-keyed `reviewStores` dict, so it's a no-op today
+    /// regardless (pre-existing, deferred to Task 6) -- but that's
+    /// moot for this hand-off specifically, since the leaf closed here
+    /// was `tab`'s only remaining leaf, so there is nothing left for a
+    /// per-tab check to catch.
     ///
     /// `gitChangesController.closeDiffPane(leafID)` only removes the
     /// leaf from the ACTIVE tab's `paneContent` (see that method's own
@@ -2364,6 +2386,12 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         tab.paneContent.removeValue(forKey: leafID)
         let (newTree, focusTarget) = tab.splitTree.remove(leafID)
         tab.splitTree = newTree
+
+        if tab.splitTree.isEmpty {
+            closeTab(id: tab.id)
+            return
+        }
+
         if tab.id == activeTab?.id {
             splitContainerView?.updateLayout(tree: tab.splitTree)
             // Mirrors `closeSurfaceAndCleanUp`'s own restore: a diff
@@ -2381,6 +2409,24 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         refreshHostingView()
         requestSave()
     }
+
+    #if DEBUG
+    /// Test seam mirroring `_setBrowserControllerForTesting`'s/
+    /// `_closingTabIDsForTesting`'s naming convention: `closePane`
+    /// itself is `private` with its only production call site being
+    /// `SplitContainerView.onClosePane`'s closure inside
+    /// `rebuildSplitContainer()` (which needs a live, on-screen
+    /// container to fire), so there is no other way to drive it
+    /// directly from a test. Reproduces that closure's own
+    /// group/tab-by-leafID lookup rather than requiring the caller to
+    /// already have them. DO NOT use from production code.
+    func _closePaneForTesting(leafID: UUID) {
+        guard let group = windowSession.groups.first(where: { g in
+            g.tabs.contains(where: { $0.paneContent[leafID] != nil })
+        }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
+        closePane(tab: tab, group: group, leafID: leafID)
+    }
+    #endif
 
     // MARK: - Session Reconnect
 
