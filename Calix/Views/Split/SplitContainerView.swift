@@ -4,6 +4,7 @@
 // NSView that recursively renders a SplitTree using SurfaceRegistry lookups.
 
 import AppKit
+import SwiftUI
 import os
 
 private let logger = Logger(subsystem: "com.calix.terminal", category: "SplitContainerView")
@@ -25,8 +26,16 @@ class SplitContainerView: NSView {
     }
 
     private var registry: SurfaceRegistry
+    /// The tab whose tree this container renders. Needed because a leaf may
+    /// resolve to a non-terminal pane (`tab.paneContent`) rendered from the
+    /// tab's own git state rather than to a ghostty surface.
+    private var tab: Tab?
     private var currentTree: SplitTree = SplitTree()
     private var scrollWrappers: [UUID: SurfaceScrollView] = [:]
+    /// Same construct-once/cache-by-leaf-ID/reap-orphans lifecycle as
+    /// `scrollWrappers` above, for leaves that render a SwiftUI pane instead
+    /// of a terminal surface.
+    private var paneHostingViews: [UUID: NSHostingView<AnyView>] = [:]
     private var activeLeafID: UUID?
     // Keep divider NSView instances alive across layout passes; AppKit's
     // mouse-capture session is bound to the original instance, so tearing
@@ -48,10 +57,35 @@ class SplitContainerView: NSView {
     var onDeferredLayoutComplete: (() -> Void)?
     var onActiveLeafChange: ((UUID) -> Void)?
 
+    // MARK: - Pane Content Wiring
+    //
+    // Set by `CalixWindowController.rebuildSplitContainer()`. All of these
+    // are only consulted when a leaf resolves to a non-terminal pane.
+
+    var onWorkingFileSelected: ((GitFileEntry) -> Void)?
+    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
+    var onRefreshGitChanges: (() -> Void)?
+    var onSubmitReview: ((UUID) -> Void)?
+    var onDiscardReview: ((UUID) -> Void)?
+    var onSubmitAllReviews: (() -> Void)?
+    var onDiscardAllReviews: (() -> Void)?
+    /// Fired with a pane leaf's own ID when its close button is tapped
+    /// (Task 5). Wired by `CalixWindowController.rebuildSplitContainer()`
+    /// to `closePane(tab:group:leafID:)`.
+    var onClosePane: ((UUID) -> Void)?
+    /// Held strongly, but `GitChangesController` never holds this view back
+    /// (its own closures capture `CalixWindowController` weakly), so there
+    /// is no retain cycle.
+    var gitChangesController: GitChangesController?
+    var reduceTransparency: Bool = false
+    var glassOpacity: Double = 1.0
+    var themeColor: NSColor = .controlAccentColor
+
     private static let minPaneSize: CGFloat = 50
 
-    init(registry: SurfaceRegistry) {
+    init(registry: SurfaceRegistry, tab: Tab? = nil) {
         self.registry = registry
+        self.tab = tab
         super.init(frame: .zero)
         wantsLayer = true
     }
@@ -65,13 +99,19 @@ class SplitContainerView: NSView {
 
     // MARK: - Update
 
-    func updateRegistry(_ registry: SurfaceRegistry) {
+    func updateRegistry(_ registry: SurfaceRegistry, tab: Tab? = nil) {
+        // Assigned before the identity guard: a plain reference swap with no
+        // teardown implied, and the guard's early return must not leave a
+        // stale tab behind on a re-entrant call with an already-held registry.
+        self.tab = tab
         guard self.registry !== registry else { return }
         self.registry = registry
         currentTree = SplitTree()
         scrollWrappers.removeAll()
         dividerCache.removeAll()
         dividersUsedThisPass.removeAll()
+        paneHostingViews.values.forEach { $0.removeFromSuperview() }
+        paneHostingViews.removeAll()
         subviews.forEach { $0.removeFromSuperview() }
         activeLeafID = nil
         needsLayout = true
@@ -92,6 +132,17 @@ class SplitContainerView: NSView {
         guard let root = tree.root else {
             subviews.forEach { $0.removeFromSuperview() }
             scrollWrappers.removeAll()
+            // Same reap `removeOrphanedSurfaces()` does below for the
+            // non-empty-tree path (e.g. closing a tab's last pane leaf,
+            // Task 5) -- an empty tree never reaches that call, so
+            // without this a stale NSHostingView<EmptyView> lingers in
+            // the dict (already removed from the view hierarchy above,
+            // via the blanket `subviews.forEach` removal) and
+            // `refreshPaneContent()` keeps reassigning `rootView` on a
+            // detached view forever. Mirrors `updateRegistry(_:)`'s own
+            // identical reset above.
+            paneHostingViews.values.forEach { $0.removeFromSuperview() }
+            paneHostingViews.removeAll()
             dividerCache.removeAll()
             activeLeafID = nil
             applyActiveDimming()
@@ -191,6 +242,26 @@ class SplitContainerView: NSView {
                 if wrapper.superview !== self {
                     addSubview(wrapper)
                 }
+            } else if let tab, isPaneLeaf(id, in: tab) {
+                // Non-terminal pane leaf. Deliberately gated on
+                // `isPaneLeaf`: a leaf that resolves to `.surface` but has
+                // no registered surface yet (mid-creation, mid-teardown)
+                // must add no subview at all, exactly as before pane
+                // rendering existed -- otherwise an invisible hosting view
+                // would end up stacked over the surface that registers a
+                // moment later.
+                let hostingView: NSHostingView<AnyView>
+                if let existing = paneHostingViews[id] {
+                    hostingView = existing
+                } else {
+                    hostingView = NSHostingView(rootView: paneView(for: id, in: tab))
+                    paneHostingViews[id] = hostingView
+                }
+                hostingView.frame = rect
+                hostingView.autoresizingMask = []
+                if hostingView.superview !== self {
+                    addSubview(hostingView)
+                }
             }
 
         case .split(let data):
@@ -247,6 +318,61 @@ class SplitContainerView: NSView {
                 placeDivider(direction: .vertical, frame: dividerRect, splitData: data, splitRect: rect)
                 layoutNode(data.second, in: secondRect)
             }
+        }
+    }
+
+    // MARK: - Pane Content
+
+    private func isPaneLeaf(_ leafID: UUID, in tab: Tab) -> Bool {
+        if case .surface = resolvePaneContent(leafID: leafID, in: tab.paneContent) { return false }
+        return true
+    }
+
+    private func paneView(for leafID: UUID, in tab: Tab) -> AnyView {
+        switch resolvePaneContent(leafID: leafID, in: tab.paneContent) {
+        case .surface:
+            return AnyView(EmptyView())
+        case .gitChanges:
+            return AnyView(GitChangesPaneView(
+                tab: tab,
+                onWorkingFileSelected: onWorkingFileSelected,
+                onBranchDeltaFileSelected: onBranchDeltaFileSelected,
+                onRefresh: onRefreshGitChanges,
+                onClose: { [weak self] in self?.onClosePane?(leafID) }
+            ))
+        case .diff(let source):
+            // In the live app `rebuildSplitContainer()` always sets
+            // `gitChangesController` before any pane leaf can exist, since
+            // `paneContent` entries are only ever created through that same
+            // controller instance. A nil here means a preview/test context.
+            guard let gitChangesController else { return AnyView(EmptyView()) }
+            return AnyView(DiffPaneView(
+                leafID: leafID,
+                source: source,
+                controller: gitChangesController,
+                reduceTransparency: reduceTransparency,
+                glassOpacity: glassOpacity,
+                onSubmitReview: { [weak self] in self?.onSubmitReview?(leafID) },
+                onDiscardReview: { [weak self] in self?.onDiscardReview?(leafID) },
+                onSubmitAllReviews: onSubmitAllReviews,
+                onDiscardAllReviews: onDiscardAllReviews,
+                onClose: { [weak self] in self?.onClosePane?(leafID) }
+            ))
+        }
+    }
+
+    /// Explicit repaint of every currently-rendered pane's data, independent
+    /// of `updateLayout(tree:)` -- which early-returns on an unchanged tree
+    /// and so never fires on a pure data change like a git-status reload or
+    /// a new review comment. Mirrors
+    /// `CalixWindowController.refreshRecoveryBar()`'s "mutate observable
+    /// state, then explicitly reassign `rootView`" convention: this codebase
+    /// does not rely on Observation auto-invalidation reaching a nested
+    /// `NSHostingView`.
+    func refreshPaneContent() {
+        guard let tab else { return }
+        for (leafID, hostingView) in paneHostingViews {
+            hostingView.rootView = paneView(for: leafID, in: tab)
         }
     }
 
@@ -348,6 +474,13 @@ class SplitContainerView: NSView {
         for id in scrollWrappers.keys where !treeIDs.contains(id) {
             scrollWrappers[id]?.removeFromSuperview()
             scrollWrappers.removeValue(forKey: id)
+        }
+        // Same for pane hosting views (an NSHostingView matches neither
+        // branch of the subview loop above, so the dictionary is the only
+        // place it can be reaped from).
+        for id in paneHostingViews.keys where !treeIDs.contains(id) {
+            paneHostingViews[id]?.removeFromSuperview()
+            paneHostingViews.removeValue(forKey: id)
         }
     }
 }

@@ -14,6 +14,10 @@ struct GitChangesView: View {
     var onWorkingFileSelected: ((GitFileEntry) -> Void)?
     var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
     var onRefresh: (() -> Void)?
+    /// Task 5 per-pane close button, shown in the header only when
+    /// non-nil -- `nil` for every call site except `GitChangesPaneView`
+    /// (a `SplitContainerView` leaf), e.g. the old sidebar rendering.
+    var onClose: (() -> Void)?
 
     @State private var isStagedExpanded = true
     @State private var isUnstagedExpanded = true
@@ -32,6 +36,15 @@ struct GitChangesView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier(AccessibilityID.Git.refreshButton)
+
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.body)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(AccessibilityID.Git.closePaneButton)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)

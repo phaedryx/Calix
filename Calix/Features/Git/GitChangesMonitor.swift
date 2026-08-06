@@ -116,6 +116,15 @@ actor GitChangesMonitor {
         repository = requestedRepository
     }
 
+    /// Test-only: the work tree currently being watched, or `nil` if
+    /// `stop()`/a never-started monitor means nothing is. Lets tests
+    /// confirm a monitor was actually torn down without depending on a
+    /// real FSEvents callback firing (see `GitChangesController.
+    /// _monitoredWorkTreeForTesting()`).
+    func _monitoredWorkTreeForTesting() -> String? {
+        repository?.workTree
+    }
+
     func stop() async {
         generation &+= 1
         debounceTask?.cancel()

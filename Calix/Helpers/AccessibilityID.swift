@@ -26,6 +26,7 @@ enum AccessibilityID {
     enum TabBar {
         static let container = "calix.tabBar"
         static let newTabButton = "calix.tabBar.newTabButton"
+        static let gitChangesButton = "calix.tabBar.gitChangesButton"
         static func tab(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString)" }
         static func tabCloseButton(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString).closeButton" }
         static func tabNameTextField(_ id: UUID) -> String { "calix.tabBar.tabNameTextField.\(id.uuidString)" }
@@ -61,6 +62,8 @@ enum AccessibilityID {
         static let changesContainer = "calix.git.changes"
         static let refreshButton = "calix.git.refreshButton"
         static let modeToggle = "calix.git.modeToggle"
+        /// Task 5: closes a single changes-list pane leaf.
+        static let closePaneButton = "calix.git.closePaneButton"
         static let stagedSection = "calix.git.staged"
         static let unstagedSection = "calix.git.unstaged"
         static let untrackedSection = "calix.git.untracked"
@@ -138,6 +141,8 @@ enum AccessibilityID {
         static let toolbar = "calix.diff.toolbar"
         static let content = "calix.diff.content"
         static let lineNumberGutter = "calix.diff.lineNumbers"
+        /// Task 5: closes a single diff pane leaf.
+        static let closeButton = "calix.diff.closeButton"
     }
     enum DiffReview {
         static let submitButton = "calix.diff.review.submitButton"

@@ -79,36 +79,46 @@ struct SplitTree: Codable, Equatable, Sendable {
 
     // MARK: - Insert
 
-    func insert(at leafID: UUID, direction: SplitDirection, newID: UUID = UUID()) -> (tree: SplitTree, newLeafID: UUID) {
+    func insert(at leafID: UUID, direction: SplitDirection, newID: UUID = UUID(), ratio: Double = 0.5) -> (tree: SplitTree, newLeafID: UUID) {
         let newID = newID
         guard let root else {
             let tree = SplitTree(root: .leaf(id: newID), focusedLeafID: newID)
             return (tree, newID)
         }
 
-        let newRoot = Self.insertNode(in: root, at: leafID, newID: newID, direction: direction)
+        let newRoot = Self.insertNode(in: root, at: leafID, newID: newID, direction: direction, ratio: ratio)
         let tree = SplitTree(root: newRoot, focusedLeafID: newID)
         return (tree, newID)
     }
 
-    private static func insertNode(in node: SplitNode, at targetID: UUID, newID: UUID, direction: SplitDirection) -> SplitNode {
+    /// Wraps the whole current tree as one side of a new split, with a fresh
+    /// leaf on the other -- e.g. opening a diff pane as a full-width row
+    /// below the terminal/changes-panel row, rather than splitting one
+    /// specific leaf in place.
+    func insertAtRoot(direction: SplitDirection, newID: UUID = UUID(), ratio: Double = 0.5) -> (tree: SplitTree, newLeafID: UUID) {
+        guard let root else {
+            let tree = SplitTree(root: .leaf(id: newID), focusedLeafID: newID)
+            return (tree, newID)
+        }
+
+        let newRoot = SplitNode.split(SplitData(direction: direction, ratio: ratio, first: root, second: .leaf(id: newID)))
+        let tree = SplitTree(root: newRoot, focusedLeafID: newID)
+        return (tree, newID)
+    }
+
+    private static func insertNode(in node: SplitNode, at targetID: UUID, newID: UUID, direction: SplitDirection, ratio: Double) -> SplitNode {
         switch node {
         case .leaf(let id):
             if id == targetID {
                 let existing = SplitNode.leaf(id: id)
                 let new = SplitNode.leaf(id: newID)
-                switch direction {
-                case .horizontal:
-                    return .split(SplitData(direction: .horizontal, ratio: 0.5, first: existing, second: new))
-                case .vertical:
-                    return .split(SplitData(direction: .vertical, ratio: 0.5, first: existing, second: new))
-                }
+                return .split(SplitData(direction: direction, ratio: ratio, first: existing, second: new))
             }
             return node
 
         case .split(let data):
-            let newFirst = insertNode(in: data.first, at: targetID, newID: newID, direction: direction)
-            let newSecond = insertNode(in: data.second, at: targetID, newID: newID, direction: direction)
+            let newFirst = insertNode(in: data.first, at: targetID, newID: newID, direction: direction, ratio: ratio)
+            let newSecond = insertNode(in: data.second, at: targetID, newID: newID, direction: direction, ratio: ratio)
             return .split(SplitData(direction: data.direction, ratio: data.ratio, first: newFirst, second: newSecond))
         }
     }
@@ -190,8 +200,24 @@ struct SplitTree: Codable, Equatable, Sendable {
 
     // MARK: - Focus Navigation
 
-    func focusTarget(for direction: FocusDirection, from leafID: UUID) -> UUID? {
-        let leaves = allLeafIDs()
+    /// `excluding` names leaves that must never be chosen as a focus target,
+    /// while still counting for geometry. `SplitTree` has no notion of what a
+    /// leaf renders; the caller supplies that. In practice
+    /// `CalixWindowController.handleGotoSplitNotification` passes
+    /// `Set(tab.paneContent.keys)` -- the tab's git-changes/diff pane leaves,
+    /// which have no ghostty surface, so landing `focusedLeafID` on one leaves
+    /// the terminal with no first responder and keystrokes going nowhere until
+    /// the user clicks it.
+    ///
+    /// Excluded leaves are dropped from the cyclic `next`/`previous` order
+    /// (navigation skips over them rather than stopping) and from the spatial
+    /// candidate set (the search falls through to the next-nearest eligible
+    /// leaf). `leafID` itself is never excluded -- it is the leaf navigation
+    /// starts from, and an excluded start simply yields `nil`.
+    func focusTarget(for direction: FocusDirection, from leafID: UUID, excluding excluded: Set<UUID> = []) -> UUID? {
+        let leaves = excluded.isEmpty
+            ? allLeafIDs()
+            : allLeafIDs().filter { $0 == leafID || !excluded.contains($0) }
         guard leaves.count > 1 else { return nil }
         guard let currentIndex = leaves.firstIndex(of: leafID) else { return nil }
 
@@ -205,18 +231,24 @@ struct SplitTree: Codable, Equatable, Sendable {
             return leaves[idx]
 
         case .spatial(let spatialDir):
-            return spatialFocusTarget(from: leafID, direction: spatialDir)
+            return spatialFocusTarget(from: leafID, direction: spatialDir, excluding: excluded)
         }
     }
 
-    private func spatialFocusTarget(from leafID: UUID, direction: SpatialDirection) -> UUID? {
+    private func spatialFocusTarget(
+        from leafID: UUID, direction: SpatialDirection, excluding excluded: Set<UUID>
+    ) -> UUID? {
         guard let root else { return nil }
+        // Slots are built from the WHOLE tree: an excluded leaf still occupies
+        // screen space, so removing it here would shift every other leaf's
+        // bounds and corrupt the direction test.
         let slots = Self.buildSpatialSlots(node: root, bounds: CGRect(x: 0, y: 0, width: 1, height: 1))
 
         guard let currentSlot = slots.first(where: { $0.id == leafID }) else { return nil }
 
         let candidates = slots.filter { slot in
             guard slot.id != leafID else { return false }
+            guard !excluded.contains(slot.id) else { return false }
             switch direction {
             case .left:  return slot.bounds.midX < currentSlot.bounds.minX
             case .right: return slot.bounds.midX > currentSlot.bounds.maxX

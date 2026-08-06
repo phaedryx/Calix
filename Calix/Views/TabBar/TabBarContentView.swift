@@ -14,6 +14,12 @@ struct TabBarContentView: View {
     var onMoveTab: ((Int, Int) -> Void)?
     var onTabRenamed: (() -> Void)?
     var activeGroupID: UUID? = nil
+    /// Whether the active tab currently has its git-changes panel open --
+    /// drives the toggle button's on/off styling. Only shown for a terminal
+    /// tab (`showGitChangesButton`), since a browser tab renders no panes.
+    var isGitChangesPanelOpen: Bool = false
+    var showGitChangesButton: Bool = false
+    var onToggleGitChangesPanel: (() -> Void)?
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var reorderState = TabReorderState()
@@ -117,6 +123,20 @@ struct TabBarContentView: View {
                 .frame(height: 38)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { onNewTab?() }
+
+            if showGitChangesButton {
+                Button(action: { onToggleGitChangesPanel?() }) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.caption)
+                        .foregroundStyle(isGitChangesPanelOpen ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
+                }
+                .modifier(GlassButtonModifier(reduceTransparency: reduceTransparency))
+                .padding(.leading, 8)
+                .help(isGitChangesPanelOpen ? "Hide Git Changes" : "Show Git Changes")
+                .accessibilityLabel("Toggle Git Changes Panel")
+                .accessibilityAddTraits(isGitChangesPanelOpen ? [.isSelected] : [])
+                .accessibilityIdentifier(AccessibilityID.TabBar.gitChangesButton)
+            }
 
             Button(action: { onNewTab?() }) {
                 Image(systemName: "plus")

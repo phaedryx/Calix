@@ -39,15 +39,6 @@ final class GitChangesController {
     private var gitChangesMonitor: GitChangesMonitor?
     private var gitMonitorStopTask: Task<Void, Never>?
     private var reviewStores: [UUID: DiffReviewStore] = [:]
-    /// The work tree the currently-loaded `gitEntries`/`branchDeltaEntries`
-    /// sidebar content actually belongs to, set whenever `refreshStatus()` loads
-    /// successfully. File selection must key off this -- not `findWorkDir()`
-    /// -- once a diff tab is active: `findWorkDir()`
-    /// falls back to "any terminal tab in the group" when the active tab
-    /// isn't a terminal, which can pick a DIFFERENT terminal tab than the
-    /// one the sidebar's contents came from and silently resolve every
-    /// subsequent click against the wrong repo (empty diffs, no error).
-    private var currentRepoRoot: String?
 
     init(
         windowSession: WindowSession,
@@ -69,35 +60,79 @@ final class GitChangesController {
         windowSession.activeGroup?.activeTab
     }
 
-    var isSidebarVisible: Bool {
-        windowSession.showSidebar && windowSession.sidebarMode == .changes
+    /// `true` exactly when the ACTIVE tab has its changes panel open --
+    /// i.e. one of its own `splitTree` leaves is a `.gitChanges` entry in
+    /// its `paneContent`, as put there by `toggleChangesPanel()` below.
+    /// Replaces the window-level `showSidebar && sidebarMode == .changes`
+    /// this used to read, deleted in Task 8 along with that sidebar mode:
+    /// git changes are per-tab now, so another tab's open panel must not
+    /// make this true.
+    ///
+    /// Gates background git-status monitoring (`startMonitoring`/
+    /// `stopMonitoring` below) plus `CalixWindowController`'s automatic
+    /// `refreshStatus()` calls on tab activation and on `cd`. Renamed from
+    /// `isSidebarVisible`, which named a UI concept that no longer exists.
+    var isChangesPanelVisible: Bool {
+        guard let tab = activeTab else { return false }
+        return tab.paneContent.values.contains(.gitChanges)
     }
 
-    var activeDiffState: DiffLoadState? {
-        guard let tab = activeTab, case .diff = tab.content else { return nil }
-        return diffStates[tab.id]
-    }
-
-    var activeDiffSource: DiffSource? {
-        guard let tab = activeTab, case .diff(let source) = tab.content else { return nil }
-        return source
-    }
-
-    var activeDiffReviewStore: DiffReviewStore? {
-        guard let tab = activeTab, case .diff = tab.content else { return nil }
-        return reviewStores[tab.id]
+    /// The ACTIVE tab's own open diff panes that currently hold
+    /// unsubmitted review comments. Single source of truth for
+    /// `submitAllDiffReviews`/`discardAllDiffReviews` and for the counts
+    /// that label and gate them (`DiffContainerView`'s "Submit All (N in M
+    /// files)" button, the `review.submitAll` palette command's
+    /// `isAvailable`), so the number the user is shown can never disagree
+    /// with the set actually acted on.
+    ///
+    /// Both filters matter: `reviewStores` is keyed by leaf ID but is not
+    /// itself partitioned by tab, and a store can outlive its
+    /// `paneContent` entry, so membership in the active tab's `splitTree`
+    /// alone is not enough.
+    private var activeTabReviewEntries: [(source: DiffSource, store: DiffReviewStore)] {
+        guard let tab = activeTab else { return [] }
+        let tabLeafIDs = Set(tab.splitTree.allLeafIDs())
+        return reviewStores.compactMap { leafID, store in
+            guard tabLeafIDs.contains(leafID), store.hasUnsubmittedComments else { return nil }
+            guard case .diff(let source) = tab.paneContent[leafID] else { return nil }
+            return (source: source, store: store)
+        }
     }
 
     var totalReviewCommentCount: Int {
-        reviewStores.values.filter { $0.hasUnsubmittedComments }.reduce(0) { $0 + $1.comments.count }
+        activeTabReviewEntries.reduce(0) { $0 + $1.store.comments.count }
     }
 
     var reviewFileCount: Int {
-        reviewStores.values.filter { $0.hasUnsubmittedComments }.count
+        activeTabReviewEntries.count
     }
 
     func reviewStore(for tabID: UUID) -> DiffReviewStore? {
         reviewStores[tabID]
+    }
+
+    /// Per-key diff load state, for callers that render a specific diff
+    /// rather than "the active tab's" one (`SplitContainerView`'s diff
+    /// panes, keyed by split-tree leaf ID).
+    func diffState(for id: UUID) -> DiffLoadState? {
+        diffStates[id]
+    }
+
+    /// The `DiffSource` a given leaf was opened with, looked up from the
+    /// active tab's `paneContent` -- there is no longer a single "the
+    /// active diff", since a tab can have multiple open diff panes.
+    func diffSource(for leafID: UUID) -> DiffSource? {
+        guard case .diff(let source) = activeTab?.paneContent[leafID] else { return nil }
+        return source
+    }
+
+    /// Test-only: the work tree the live `GitChangesMonitor` is currently
+    /// watching, or `nil` if there's no monitor yet or it's been stopped.
+    /// Lets tests confirm `stopMonitoring` actually tore down the FSEvents
+    /// watch on a tab switch, without depending on a real filesystem event
+    /// round-tripping through debounce.
+    func _monitoredWorkTreeForTesting() async -> String? {
+        await gitChangesMonitor?._monitoredWorkTreeForTesting()
     }
 
     // MARK: - Sidebar / Monitoring
@@ -106,17 +141,18 @@ final class GitChangesController {
         refreshTask?.cancel()
         refreshTask = Task { [weak self] in
             guard let self else { return }
+            guard let tab = self.activeTab else { return }
 
             let workDir = self.findWorkDir()
             guard let workDir else {
                 self.stopMonitoring(cancelRefresh: false)
-                self.windowSession.gitChangesState = .error("No working directory found")
+                tab.gitChangesState = .error("No working directory found")
                 self.refresh()
                 return
             }
 
             if showsLoadingState {
-                self.windowSession.gitChangesState = .loading
+                tab.gitChangesState = .loading
                 self.refresh()
             }
 
@@ -124,8 +160,7 @@ final class GitChangesController {
                 let repository = try await GitService.repositoryLocation(workDir: workDir)
                 guard !Task.isCancelled else { return }
 
-                self.windowSession.repoRoots[workDir] = repository.workTree
-                self.currentRepoRoot = repository.workTree
+                tab.repoRoot = repository.workTree
                 await self.startMonitoring(repository: repository)
                 guard !Task.isCancelled else { return }
 
@@ -143,24 +178,24 @@ final class GitChangesController {
                 let (entries, delta) = try await (statusResult, deltaResult)
                 guard !Task.isCancelled else { return }
 
-                self.windowSession.gitEntries = entries
-                self.windowSession.branchDeltaBase = delta.base
-                self.windowSession.branchDeltaEntries = delta.entries
-                self.windowSession.gitChangesState = .loaded
+                tab.gitEntries = entries
+                tab.branchDeltaBase = delta.base
+                tab.branchDeltaEntries = delta.entries
+                tab.gitChangesState = .loaded
                 self.refresh()
             } catch let error as GitService.GitError {
                 guard !Task.isCancelled else { return }
                 self.stopMonitoring(cancelRefresh: false)
                 if case .notARepository = error {
-                    self.windowSession.gitChangesState = .notRepository
+                    tab.gitChangesState = .notRepository
                 } else {
-                    self.windowSession.gitChangesState = .error(error.localizedDescription)
+                    tab.gitChangesState = .error(error.localizedDescription)
                 }
                 self.refresh()
             } catch {
                 guard !Task.isCancelled else { return }
                 self.stopMonitoring(cancelRefresh: false)
-                self.windowSession.gitChangesState = .error(error.localizedDescription)
+                tab.gitChangesState = .error(error.localizedDescription)
                 self.refresh()
             }
         }
@@ -180,14 +215,14 @@ final class GitChangesController {
         if let stopTask = gitMonitorStopTask {
             await stopTask.value
         }
-        guard !Task.isCancelled, isSidebarVisible else { return }
+        guard !Task.isCancelled, isChangesPanelVisible else { return }
 
         let monitor: GitChangesMonitor
         if let existingMonitor = gitChangesMonitor {
             monitor = existingMonitor
         } else {
             monitor = GitChangesMonitor { @MainActor [weak self] _ in
-                guard let self, self.isSidebarVisible else { return }
+                guard let self, self.isChangesPanelVisible else { return }
                 self.refreshStatus(showsLoadingState: false)
             }
             gitChangesMonitor = monitor
@@ -200,7 +235,12 @@ final class GitChangesController {
         }
     }
 
-    func stopMonitoring(cancelRefresh: Bool = true) {
+    /// `cancelRefresh` has no default on purpose: every caller today wants
+    /// `false` (leave an in-flight status load to finish writing to its
+    /// tab), and a silent `true` default is the wrong thing to inherit by
+    /// omission. Keep the parameter -- Task 10 owns monitor lifecycle and
+    /// a tear-everything-down caller is expected.
+    func stopMonitoring(cancelRefresh: Bool) {
         if cancelRefresh {
             refreshTask?.cancel()
         }
@@ -214,10 +254,101 @@ final class GitChangesController {
         }
     }
 
+    // MARK: - Changes Panel
+
+    /// True when `toggleChangesPanel()` would take the CLOSE branch and doing
+    /// so would leave the active tab's `splitTree` with no leaves at all.
+    ///
+    /// Reachable state: a tab whose only terminal shell exits keeps the tab
+    /// alive as long as its changes panel is still open (deliberate, Task 5).
+    /// Closing that panel then removes the last leaf. `closePane` (the pane's
+    /// own X button) already detects this and hands off to
+    /// `CalixWindowController.closeTab(id:)`; the toggle/palette route did not,
+    /// leaving a tab that renders nothing and is unrecoverable except via
+    /// Cmd+W.
+    ///
+    /// This is a pure query on purpose: tab closing belongs to
+    /// `CalixWindowController`, and its `closeTab(id:)` has a
+    /// quit-confirmation gate the user can cancel. Asking BEFORE mutating
+    /// anything means a cancelled prompt leaves the panel open and intact,
+    /// rather than already-removed with no tab to put it back in.
+    func closingChangesPanelWouldEmptyTree() -> Bool {
+        guard let tab = activeTab, case .terminal = tab.content else { return false }
+        guard let existingLeafID = tab.paneContent.first(where: { $0.value == .gitChanges })?.key else { return false }
+        return tab.splitTree.remove(existingLeafID).tree.isEmpty
+    }
+
+    /// Opens or closes the ACTIVE tab's git-changes panel: exactly one
+    /// `.gitChanges` leaf inserted beside (or removed from) that tab's own
+    /// `splitTree`. This is the replacement for the window-level `.changes`
+    /// sidebar mode deleted in Task 8 -- each tab's panel is independent,
+    /// showing that tab's own repo (`Tab.repoRoot`, resolved from its
+    /// `pwd`).
+    ///
+    /// Driven by the `git.showChanges` palette command and the tab bar's
+    /// changes-panel button, both via
+    /// `CalixWindowController.toggleGitChangesPanel()`, which additionally
+    /// re-asserts AppKit first responder afterwards (see its comment) and
+    /// -- because tab closing is not this controller's job -- checks
+    /// `closingChangesPanelWouldEmptyTree()` FIRST and routes through
+    /// `closeTab(id:)` instead of calling this method at all when the close
+    /// would leave the tab with no leaves. This method itself deliberately
+    /// does not guard against that; see that query's doc comment.
+    func toggleChangesPanel() {
+        guard let tab = activeTab else { return }
+        // A browser tab renders `BrowserContainerView`, not
+        // `SplitContainerView`, so a pane inserted into its `splitTree`
+        // would be invisible and unclosable.
+        guard case .terminal = tab.content else { return }
+
+        if let existingLeafID = tab.paneContent.first(where: { $0.value == .gitChanges })?.key {
+            tab.paneContent.removeValue(forKey: existingLeafID)
+            // `remove` re-points `focusedLeafID` at the closed leaf's
+            // sibling for us; the caller turns that into an actual
+            // first-responder change.
+            tab.splitTree = tab.splitTree.remove(existingLeafID).tree
+            // `isChangesPanelVisible` is false from here, so the FSEvents
+            // monitor could only fire refreshes that immediately bail --
+            // stop watching instead of leaving the stream alive for the
+            // window's lifetime. `cancelRefresh: false` lets an in-flight
+            // status load finish writing to `tab` harmlessly rather than
+            // being torn down mid-flight.
+            stopMonitoring(cancelRefresh: false)
+        } else {
+            guard let anchorLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first else { return }
+            // `ratio` is the fraction given to `first` (the existing/anchor
+            // leaf); giving it 4/5 leaves the new changes-panel leaf
+            // (`second`) about 1/5 of the split's width.
+            let (newTree, newLeafID) = tab.splitTree.insert(at: anchorLeafID, direction: .horizontal, ratio: 4.0 / 5.0)
+            tab.splitTree = newTree
+            // Same reasoning as `openDiffTab` below: `insert` focuses the
+            // leaf it just created, but a `.gitChanges` pane has no ghostty
+            // surface, so leaving `focusedLeafID` on it makes
+            // `focusActiveTabImmediately`/`attemptFocusRestore`
+            // (CalixWindowController) and `CockpitAppAccess.listPanes`'s
+            // `isFocused` all wrong until the user clicks the terminal.
+            // The `contains` check covers a stale `focusedLeafID` that is
+            // no longer in the tree: `insert` then builds a fresh tree that
+            // never held it, and there is nothing to restore focus to --
+            // leave what `insert` set.
+            if tab.splitTree.allLeafIDs().contains(anchorLeafID) {
+                tab.splitTree.focusedLeafID = anchorLeafID
+            }
+            tab.paneContent[newLeafID] = .gitChanges
+            // Load the panel's data and (re-)arm the monitor the close
+            // branch above stops. `showsLoadingState` only on a tab that
+            // has never resolved its repo: a re-open already has last-good
+            // `gitEntries` cached on the tab, so it refreshes silently in
+            // the background rather than flashing a spinner over them.
+            refreshStatus(showsLoadingState: tab.repoRoot == nil)
+        }
+        refresh()
+    }
+
     // MARK: - Diff Tabs
 
     func handleWorkingFileSelected(_ entry: GitFileEntry) {
-        guard let repoRoot = currentRepoRoot else { return }
+        guard let repoRoot = activeTab?.repoRoot else { return }
 
         let source: DiffSource
         if entry.isStaged {
@@ -232,51 +363,73 @@ final class GitChangesController {
     }
 
     func handleBranchDeltaFileSelected(_ entry: BranchDiffEntry) {
-        guard let repoRoot = currentRepoRoot, let base = windowSession.branchDeltaBase else { return }
+        guard let repoRoot = activeTab?.repoRoot, let base = activeTab?.branchDeltaBase else { return }
 
         let source: DiffSource = .branchDelta(path: entry.path, base: base, workDir: repoRoot)
         openDiffTab(source: source)
     }
 
     private func openDiffTab(source: DiffSource) {
-        // Dedup: check if same source already open
-        if let group = windowSession.activeGroup {
-            for tab in group.tabs {
-                if case .diff(let existingSource) = tab.content, existingSource == source {
-                    switchToTab(tab.id)
-                    return
-                }
-            }
+        guard let group = windowSession.activeGroup, let tab = group.activeTab else { return }
+
+        // Dedup: check if this source is already open as a pane in this tab.
+        // Deliberately does NOT touch `focusedLeafID` -- see the note below
+        // on why the fresh-insertion path restores focus to the terminal
+        // leaf; the same reasoning applies here, and there's no existing
+        // leaf to refocus onto that has a ghostty surface anyway.
+        if tab.paneContent.contains(where: {
+            if case .diff(let existingSource) = $0.value { return existingSource == source }
+            return false
+        }) {
+            refresh()
+            return
         }
 
-        guard let group = windowSession.activeGroup else { return }
+        // The terminal leaf the user was focused on. Restored below so
+        // keyboard focus stays on the terminal: `focusedLeafID` is read as
+        // "the leaf with keyboard focus" by `focusActiveTabImmediately`/
+        // `attemptFocusRestore` (CalixWindowController) and surfaced over
+        // MCP as `isFocused` by `CockpitAppAccess.listPanes`. A diff pane
+        // has no ghostty surface, so leaving focus on it (as `insert`
+        // otherwise does) makes all three readers wrong until the user
+        // manually clicks the terminal.
+        let insertionLeafID = tab.splitTree.focusedLeafID ?? tab.splitTree.allLeafIDs().first ?? UUID()
 
-        let fileName: String
-        switch source {
-        case .unstaged(let path, _), .staged(let path, _), .branchDelta(let path, _, _), .untracked(let path, _):
-            fileName = (path as NSString).lastPathComponent
+        // First diff for this tab opens as a new full-width row below the
+        // terminal/changes-panel row (`insertAtRoot`, wrapping the whole
+        // existing tree rather than one leaf). Once a diff row exists,
+        // further diffs split that row into additional columns alongside it.
+        let existingDiffLeafID = tab.paneContent.first {
+            if case .diff = $0.value { return true }
+            return false
+        }?.key
+        let newTree: SplitTree
+        let newLeafID: UUID
+        if let existingDiffLeafID, tab.splitTree.allLeafIDs().contains(existingDiffLeafID) {
+            (newTree, newLeafID) = tab.splitTree.insert(at: existingDiffLeafID, direction: .horizontal)
+        } else {
+            (newTree, newLeafID) = tab.splitTree.insertAtRoot(direction: .vertical)
         }
+        tab.splitTree = newTree
+        if tab.splitTree.allLeafIDs().contains(insertionLeafID) {
+            // Normal case: the terminal leaf we split against still exists
+            // in the resulting tree -- keep it focused.
+            tab.splitTree.focusedLeafID = insertionLeafID
+        }
+        // Else: `insertionLeafID` was a fallback (no terminal leaf existed
+        // to split against, e.g. a tab with an empty splitTree), so `insert`
+        // built a fresh tree with only `newLeafID` in it. Leave
+        // `focusedLeafID` as `insert` set it (the new leaf) -- there's
+        // nothing else to focus.
+        tab.paneContent[newLeafID] = .diff(source: source)
 
-        let tab = Tab(title: fileName, content: .diff(source: source))
-        deactivateCurrentTab()
-        group.addTab(tab)
-        group.activeTabID = tab.id
-
-        diffStates[tab.id] = .loading
+        diffStates[newLeafID] = .loading
         let reviewStore = DiffReviewStore()
         reviewStore.onCommentsChanged = { [weak self] in self?.refresh() }
-        reviewStores[tab.id] = reviewStore
+        reviewStores[newLeafID] = reviewStore
         refresh()
 
-        let tabID = tab.id
-        // Plain subscript store, not `insert(_:task:)`: tabID is the id
-        // of the `Tab()` just created above, so this key was never
-        // registered before -- `insert`'s cancel-before-replace would
-        // never actually match anything here. This Task also never
-        // self-removes its own entry once done (unlike `childExitedTasks`'
-        // Tasks) -- a pre-existing divergence kept as-is here, not
-        // something this refactor changes.
-        diffTasks[tabID] = Task { [weak self] in
+        diffTasks[newLeafID] = Task { [weak self] in
             guard let self else { return }
             do {
                 let rawDiff = try await GitService.fileDiff(source: source)
@@ -290,59 +443,47 @@ final class GitChangesController {
                 let parsed = DiffParser.parse(rawDiff, path: path)
                 guard !Task.isCancelled else { return }
 
-                // Verify tab still exists
-                guard self.windowSession.groups.flatMap(\.tabs).contains(where: { $0.id == tabID }) else { return }
-
-                self.diffStates[tabID] = .success(parsed)
+                guard tab.paneContent[newLeafID] != nil else { return }
+                self.diffStates[newLeafID] = .success(parsed)
                 self.refresh()
             } catch {
                 guard !Task.isCancelled else { return }
-                self.diffStates[tabID] = .error(error.localizedDescription)
+                self.diffStates[newLeafID] = .error(error.localizedDescription)
                 self.refresh()
             }
         }
     }
 
-    func closeDiffTab(_ tabID: UUID) {
-        diffTasks[tabID]?.cancel()
-        diffTasks.removeValue(forKey: tabID)
-        diffStates.removeValue(forKey: tabID)
-        reviewStores.removeValue(forKey: tabID)
+    /// Removes a diff/changes pane's controller-owned state (task,
+    /// load-state, review store) for `leafID`, and drops it from the
+    /// ACTIVE tab's `paneContent` if it's there. Callers closing a pane
+    /// belonging to a tab that may not be the active one (e.g. a whole
+    /// background tab/group closing) must additionally remove it from
+    /// that tab's own `paneContent` themselves -- see
+    /// `CalixWindowController.closePane`/`closeTab`/`closeActiveGroup`/
+    /// `closeAllTabsInGroup`. Unsent-review-comment confirmation stays
+    /// the caller's job, same as today's `closeTab` -- Task 6
+    /// generalizes that check for whole-tab close; per-pane close in
+    /// `CalixWindowController` gets its own equivalent single-pane check.
+    func closeDiffPane(_ leafID: UUID) {
+        diffTasks[leafID]?.cancel()
+        diffTasks.removeValue(forKey: leafID)
+        diffStates.removeValue(forKey: leafID)
+        reviewStores.removeValue(forKey: leafID)
+        if let tab = windowSession.activeGroup?.activeTab {
+            tab.paneContent.removeValue(forKey: leafID)
+        }
     }
 
     private func findWorkDir() -> String? {
-        // 1. Active terminal tab's pwd
-        if let tab = activeTab, case .terminal = tab.content, let pwd = tab.pwd {
-            return pwd
-        }
-        // 2. Any terminal tab in same group
-        if let group = windowSession.activeGroup {
-            for tab in group.tabs {
-                if case .terminal = tab.content, let pwd = tab.pwd {
-                    return pwd
-                }
-            }
-        }
-        // 3. Any terminal tab in any group
-        for group in windowSession.groups {
-            for tab in group.tabs {
-                if case .terminal = tab.content, let pwd = tab.pwd {
-                    return pwd
-                }
-            }
-        }
-        // 4. Fallback from cached repo roots
-        return windowSession.repoRoots.values.first
+        activeTab?.pwd
     }
 
     // MARK: - Review Submission
 
-    func submitDiffReview(tabID: UUID) {
-        guard let store = reviewStores[tabID], store.hasUnsubmittedComments else { return }
-
-        // Get file path from tab
-        guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
-              case .diff(let source) = tab.content else { return }
+    func submitDiffReview(leafID: UUID) {
+        guard let tab = activeTab, let store = reviewStores[leafID], store.hasUnsubmittedComments else { return }
+        guard case .diff(let source) = tab.paneContent[leafID] else { return }
         let filePath: String
         switch source {
         case .unstaged(let p, _), .staged(let p, _), .branchDelta(let p, _, _), .untracked(let p, _):
@@ -351,7 +492,6 @@ final class GitChangesController {
 
         let payload = store.formatForSubmission(filePath: filePath)
         let result = sendToAgent(payload)
-
         if result == .sent {
             store.clearAll()
             refresh()
@@ -359,33 +499,32 @@ final class GitChangesController {
     }
 
     func submitAllDiffReviews() {
-        // Collect all review stores with comments, paired with their DiffSource
-        let entries: [(source: DiffSource, store: DiffReviewStore)] = reviewStores.compactMap { tabID, store in
-            guard store.hasUnsubmittedComments else { return nil }
-            guard let tab = windowSession.groups.flatMap(\.tabs).first(where: { $0.id == tabID }),
-                  case .diff(let source) = tab.content else { return nil }
-            return (source: source, store: store)
-        }
+        let entries = activeTabReviewEntries
         guard !entries.isEmpty else { return }
 
         let payload = DiffReviewStore.formatAllForSubmission(entries)
         let result = sendToAgent(payload)
-
         if result == .sent {
             for entry in entries { entry.store.clearAll() }
             refresh()
         }
     }
 
-    func discardReview(tabID: UUID) {
-        guard let store = reviewStores[tabID] else { return }
+    func discardReview(leafID: UUID) {
+        guard let store = reviewStores[leafID] else { return }
         store.clearAll()
         refresh()
     }
 
+    /// Scoped to the active tab's own diff panes, exactly like
+    /// `submitAllDiffReviews` above -- the button that triggers this lives
+    /// in an active-tab diff pane and is gated on the (now tab-scoped)
+    /// `reviewFileCount`, and the confirmation text below is built from the
+    /// same counts. A window-global discard would report N comments and
+    /// silently destroy more than N.
     func discardAllDiffReviews() {
-        let storesWithComments = reviewStores.values.filter { $0.hasUnsubmittedComments }
-        guard !storesWithComments.isEmpty else { return }
+        let entries = activeTabReviewEntries
+        guard !entries.isEmpty else { return }
 
         let alert = NSAlert()
         alert.messageText = "Discard All Review Comments"
@@ -396,7 +535,7 @@ final class GitChangesController {
         let response = alert.runModal()
         guard response == .alertFirstButtonReturn else { return }
 
-        for store in storesWithComments { store.clearAll() }
+        for entry in entries { entry.store.clearAll() }
         refresh()
     }
 

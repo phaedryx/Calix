@@ -10,11 +10,10 @@ import Foundation
 // belongs to the git domain — it just lives here for historical reasons.
 enum SidebarMode: Sendable {
     case tabs
-    case changes
     case agents
 }
 
-enum GitChangesState: Sendable {
+enum GitChangesState: Sendable, Equatable {
     case notLoaded
     case notRepository
     case loading

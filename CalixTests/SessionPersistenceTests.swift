@@ -488,17 +488,45 @@ final class SessionPersistenceTests: XCTestCase {
 
     // MARK: - Phase 6: SessionPersistenceActor Path
 
-    /// The save path should be ~/.calix/sessions.json (not Application Support).
-    /// Will fail: sessionSavePath() does not exist yet on SessionPersistenceActor.
+    /// The save file is always named `sessions.json`; which DIRECTORY holds it
+    /// depends on `CALIX_UITEST_SESSION_DIR`.
+    ///
+    /// This test used to assert the real `~/.calix/sessions.json`
+    /// unconditionally. That became wrong (deterministically failing, not
+    /// flaky) once the `CALIX_UITEST_SESSION_DIR` test isolation landed: the
+    /// `Calix`/`CalixTests` schemes' test actions set that variable to
+    /// `$(TMPDIR)/CalixTests-sessions` (see `project.yml`) precisely so the
+    /// suite never touches the developer's real session file, and
+    /// `SessionPersistenceActor.init()` prefers it when present. Asserting
+    /// against the env var is also the stronger test: it proves the actor
+    /// actually honours the isolation rather than merely that it can compute a
+    /// home-relative path.
+    ///
+    /// The `lastPathComponent` assertion is deliberately outside the branch so
+    /// this test cannot go silently vacuous if the variable ever disappears.
     func test_persistence_actor_save_path() async {
         let actor = SessionPersistenceActor()
         let savePath = await actor.sessionSavePath()
 
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let expectedPath = homeDir.appendingPathComponent(".calix/sessions.json").path
+        XCTAssertEqual(savePath.lastPathComponent, "sessions.json",
+                       "Save file should always be named sessions.json")
 
-        XCTAssertEqual(savePath.path, expectedPath,
-                       "Save path should be ~/.calix/sessions.json")
+        // Built through the same URL calls production uses -- `$(TMPDIR)`
+        // expands with a trailing slash, so string concatenation would not
+        // match.
+        if let testDir = ProcessInfo.processInfo.environment["CALIX_UITEST_SESSION_DIR"] {
+            let expected = URL(fileURLWithPath: testDir, isDirectory: true)
+                .appendingPathComponent("sessions.json")
+            XCTAssertEqual(savePath.path, expected.path,
+                           "CALIX_UITEST_SESSION_DIR must win over the real ~/.calix")
+        } else {
+            let root = URL(fileURLWithPath: SessionRootResolver().resolve(), isDirectory: true)
+            let expected = root
+                .appendingPathComponent(".calix", isDirectory: true)
+                .appendingPathComponent("sessions.json")
+            XCTAssertEqual(savePath.path, expected.path,
+                           "Without the isolation variable the save path should be <root>/.calix/sessions.json")
+        }
     }
 
     /// The actor should expose a method to migrate from the legacy Application Support path.
@@ -667,10 +695,48 @@ final class SessionPersistenceTests: XCTestCase {
         let tab = Tab(title: "Terminal")
         tab.titleOverride = "Server 1"
 
-        let snapshot = tab.snapshot()!
+        let snapshot = tab.snapshot()
 
         XCTAssertEqual(snapshot.titleOverride, "Server 1",
                        "Tab.snapshot() should capture titleOverride")
+    }
+
+    /// Tab.snapshot() should strip every paneContent-keyed leaf (both
+    /// git-changes AND diff panes) from the persisted splitTree, since those
+    /// panes are ephemeral and have no real ghostty surface to restore. Also
+    /// pins that the surviving terminal leaf stays focused, not a
+    /// since-stripped pane leaf.
+    @MainActor
+    func test_tab_snapshot_stripsGitChangesAndDiffLeaves() {
+        let terminalLeafID = UUID()
+        let tab = Tab(pwd: "/repo", splitTree: SplitTree(leafID: terminalLeafID))
+        let (treeWithChanges, changesLeafID) = tab.splitTree.insert(at: terminalLeafID, direction: .horizontal)
+        let (treeWithDiff, diffLeafID) = treeWithChanges.insert(at: terminalLeafID, direction: .vertical)
+        tab.splitTree = treeWithDiff
+        tab.paneContent[changesLeafID] = .gitChanges
+        tab.paneContent[diffLeafID] = .diff(source: .unstaged(path: "foo.swift", workDir: "/repo"))
+
+        let snapshot = tab.snapshot()
+        XCTAssertEqual(snapshot.splitTree.allLeafIDs(), [terminalLeafID])
+        XCTAssertEqual(snapshot.splitTree.focusedLeafID, terminalLeafID,
+                       "The persisted tree must not focus a since-stripped pane leaf")
+    }
+
+    /// Edge case Task 5 explicitly decided to allow: a tab made up ENTIRELY
+    /// of pane leaves, with no terminal surface at all. Stripping every
+    /// paneContent-keyed leaf must still produce a sensible (empty)
+    /// snapshot splitTree rather than crash or leave a dangling leaf ID —
+    /// restore-side, `AppDelegate.restoreTabSurfaces` bails on an empty
+    /// `allLeafIDs()` and `fallbackCreateSurface` mints a fresh terminal for
+    /// the tab instead.
+    @MainActor
+    func test_tab_snapshot_ofPaneOnlyTab_producesEmptySplitTree() {
+        let paneLeafID = UUID()
+        let tab = Tab(pwd: "/repo", splitTree: SplitTree(leafID: paneLeafID))
+        tab.paneContent[paneLeafID] = .gitChanges
+
+        let snapshot = tab.snapshot()
+        XCTAssertTrue(snapshot.splitTree.allLeafIDs().isEmpty)
     }
 
     /// Tab(snapshot:) should restore titleOverride from a TabSnapshot.

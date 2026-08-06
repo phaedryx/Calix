@@ -1,0 +1,42 @@
+// GitChangesPaneView.swift
+// Calix
+//
+// Renders a tab's git-changes list as a split-tree pane. Reads directly off
+// `tab` (an `@Observable` class) so the enclosing `NSHostingView`'s body
+// re-evaluates whenever `tab.gitEntries`/`gitChangesState`/etc. change --
+// which `SplitContainerView.refreshPaneContent()` triggers explicitly by
+// reassigning `rootView`, per this codebase's "mutate then refresh"
+// convention.
+
+import SwiftUI
+
+struct GitChangesPaneView: View {
+    let tab: Tab
+    var onWorkingFileSelected: ((GitFileEntry) -> Void)?
+    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
+    var onRefresh: (() -> Void)?
+    /// Closes this one pane (Task 5), leaving the rest of the tab intact.
+    var onClose: (() -> Void)?
+
+    var body: some View {
+        GitChangesView(
+            gitChangesState: tab.gitChangesState,
+            gitEntries: tab.gitEntries,
+            branchDeltaBase: tab.branchDeltaBase,
+            branchDeltaEntries: tab.branchDeltaEntries,
+            onWorkingFileSelected: onWorkingFileSelected,
+            onBranchDeltaFileSelected: onBranchDeltaFileSelected,
+            onRefresh: onRefresh,
+            onClose: onClose
+        )
+        // The shared `SplitDividerView` between this pane and its neighbor
+        // is a nearly-invisible 1pt hairline (0.5-opacity glass tint) --
+        // add a slightly more visible edge of our own so the panel's
+        // boundary reads clearly against the terminal next to it.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color.white.opacity(0.18))
+                .frame(width: 1)
+        }
+    }
+}

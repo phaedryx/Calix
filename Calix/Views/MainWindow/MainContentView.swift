@@ -12,9 +12,6 @@ struct MainContentView: View {
     let commandRegistry: CommandRegistry?
     let splitContainerView: SplitContainerView
     var activeBrowserController: BrowserTabController?
-    var activeDiffState: DiffLoadState?
-    var activeDiffSource: DiffSource?
-    var activeDiffReviewStore: DiffReviewStore?
     /// Chrome-style in-app recovery bar (RecoveryBarModel.swift), shown
     /// above the tab bar/pane content as the first child of `body`'s own
     /// top-level `VStack`. `nil` (no existing caller besides
@@ -29,10 +26,12 @@ struct MainContentView: View {
     var approvalBannerModel: ApprovalBannerModel?
 
     @Binding var sidebarMode: SidebarMode
-    var gitChangesState: GitChangesState = .notLoaded
-    var gitEntries: [GitFileEntry] = []
-    var branchDeltaBase: String?
-    var branchDeltaEntries: [BranchDiffEntry] = []
+    /// Active tab's git-changes panel state, for the tab bar's toggle
+    /// button. The panel itself renders as a `.gitChanges` pane inside
+    /// `splitContainerView`, not through this view.
+    var isGitChangesPanelOpen: Bool = false
+    var showGitChangesButton: Bool = false
+    var onToggleGitChangesPanel: (() -> Void)?
 
     var onTabSelected: ((UUID) -> Void)?
     var onGroupSelected: ((UUID) -> Void)?
@@ -43,24 +42,15 @@ struct MainContentView: View {
     var onTabRenamed: (() -> Void)?
     var onToggleSidebar: (() -> Void)?
     var onDismissCommandPalette: (() -> Void)?
-    var onWorkingFileSelected: ((GitFileEntry) -> Void)?
-    var onBranchDeltaFileSelected: ((BranchDiffEntry) -> Void)?
-    var onRefreshGitStatus: (() -> Void)?
     var onSidebarWidthChanged: ((CGFloat) -> Void)?
     var onCollapseToggled: (() -> Void)?
     var onCloseAllTabsInGroup: ((UUID) -> Void)?
     var onMoveTab: ((UUID, Int, Int) -> Void)?  // (groupID, fromIndex, toIndex)
     var onMoveGroup: ((Int, Int) -> Void)?  // (fromIndex, toIndex)
     var onSidebarDragCommitted: (() -> Void)?
-    var onSubmitReview: (() -> Void)?
-    var onDiscardReview: (() -> Void)?
-    var onSubmitAllReviews: (() -> Void)?
-    var onDiscardAllReviews: (() -> Void)?
     var onComposeOverlaySend: ((String) -> Bool)?
     var onDismissComposeOverlay: (() -> Void)?
     var onComposeOverlayEscapePressed: (() -> Void)?
-    var totalReviewCommentCount: Int = 0
-    var reviewFileCount: Int = 0
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage("terminalGlassOpacity") private var glassOpacity = 0.7
@@ -130,10 +120,6 @@ struct MainContentView: View {
                         activeGroupID: windowSession.activeGroupID,
                         activeTabID: activeTabID,
                         sidebarMode: $sidebarMode,
-                        gitChangesState: gitChangesState,
-                        gitEntries: gitEntries,
-                        branchDeltaBase: branchDeltaBase,
-                        branchDeltaEntries: branchDeltaEntries,
                         onGroupSelected: onGroupSelected,
                         onTabSelected: onTabSelected,
                         onNewGroup: onNewGroup,
@@ -142,9 +128,6 @@ struct MainContentView: View {
                         onTabRenamed: onTabRenamed,
                         onCollapseToggled: onCollapseToggled,
                         onCloseAllTabsInGroup: onCloseAllTabsInGroup,
-                        onWorkingFileSelected: onWorkingFileSelected,
-                        onBranchDeltaFileSelected: onBranchDeltaFileSelected,
-                        onRefreshGitStatus: onRefreshGitStatus,
                         onMoveTab: onMoveTab,
                         onMoveGroup: onMoveGroup
                     )
@@ -177,52 +160,14 @@ struct MainContentView: View {
                                     ? { from, to in onMoveTab?(activeGroup!.id, from, to) }
                                     : nil,
                                 onTabRenamed: onTabRenamed,
-                                activeGroupID: activeGroup?.id
+                                activeGroupID: activeGroup?.id,
+                                isGitChangesPanelOpen: isGitChangesPanelOpen,
+                                showGitChangesButton: showGitChangesButton,
+                                onToggleGitChangesPanel: onToggleGitChangesPanel
                             )
                         }
 
-                        if let diffSource = activeDiffSource, let diffState = activeDiffState {
-                            VStack(spacing: 0) {
-                                DiffToolbarView(
-                                    source: diffSource,
-                                    reviewStore: activeDiffReviewStore,
-                                    onSubmitReview: onSubmitReview,
-                                    onDiscardReview: onDiscardReview,
-                                    totalReviewCommentCount: totalReviewCommentCount,
-                                    reviewFileCount: reviewFileCount,
-                                    onSubmitAllReviews: onSubmitAllReviews,
-                                    onDiscardAllReviews: onDiscardAllReviews
-                                )
-                                switch diffState {
-                                case .loading:
-                                    VStack {
-                                        Spacer()
-                                        ProgressView("Loading diff...")
-                                        Spacer()
-                                    }
-                                case .success(let diff):
-                                    DiffGlassContentView(
-                                        diff: diff,
-                                        reduceTransparency: reduceTransparency,
-                                        glassOpacity: glassOpacity,
-                                        reviewStore: activeDiffReviewStore
-                                    )
-                                        .accessibilityIdentifier(AccessibilityID.Diff.content)
-                                case .error(let message):
-                                    VStack(spacing: 12) {
-                                        Spacer()
-                                        Image(systemName: "exclamationmark.triangle")
-                                            .font(.largeTitle)
-                                            .foregroundStyle(.secondary)
-                                        Text(message)
-                                            .foregroundStyle(.secondary)
-                                        Spacer()
-                                    }
-                                }
-                            }
-                            .glassEffect(.clear.tint(Color(nsColor: GlassTheme.chromeTint(for: themeColor, glassOpacity: glassOpacity))), in: .rect)
-                            .accessibilityIdentifier(AccessibilityID.Diff.container)
-                        } else if let browserController = activeBrowserController {
+                        if let browserController = activeBrowserController {
                             BrowserContainerView(controller: browserController)
                         } else {
                             VStack(spacing: 0) {

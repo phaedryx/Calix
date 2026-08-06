@@ -13,6 +13,21 @@ private let logger = Logger(
 class CalixWindowController: NSWindowController, NSWindowDelegate {
     private(set) var windowSession: WindowSession
     private var splitContainerView: SplitContainerView?
+    #if DEBUG
+    /// Test seam: read-only handle on the live container, so tests can
+    /// assert `rebuildSplitContainer()` actually wired the pane callbacks
+    /// (`onWorkingFileSelected` and friends) instead of leaving them nil.
+    /// Mirrors `_closingTabIDsForTesting`'s naming/gating convention. DO
+    /// NOT use from production code.
+    var _splitContainerViewForTesting: SplitContainerView? { splitContainerView }
+    #endif
+    #if DEBUG
+    /// Test seam: read-only handle on `gitChangesController`, so tests can
+    /// poll `_monitoredWorkTreeForTesting()` to confirm `activateCurrentTab()`
+    /// actually stops the git-changes monitor when switching to a tab whose
+    /// changes panel isn't open. DO NOT use from production code.
+    var _gitChangesControllerForTesting: GitChangesController { gitChangesController }
+    #endif
     private var hostingView: NSHostingView<MainContentView>?
     private var wasOccluded = false
     /// Not `private` (P4): `SessionCommandPaletteTests` reads
@@ -126,7 +141,19 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// only because first access happens post-`super.init()`.
     private lazy var gitChangesController: GitChangesController = GitChangesController(
         windowSession: windowSession,
-        refresh: { [weak self] in self?.refreshHostingView() },
+        refresh: { [weak self] in
+            self?.refreshHostingView()
+            // `openDiffTab` mutates `tab.splitTree` (a leaf insert), which
+            // `updateTerminalLayout()` must see to actually build the new
+            // pane's `NSHostingView` -- `refreshPaneContent()` alone only
+            // repaints hosting views that already exist. Once the tree is
+            // synced, `refreshPaneContent()` covers the pure-data-changed
+            // case (git status reload, diff finishing load, a new review
+            // comment) that `updateLayout(tree:)` would otherwise no-op on
+            // since the tree itself didn't change.
+            self?.updateTerminalLayout()
+            self?.splitContainerView?.refreshPaneContent()
+        },
         switchToTab: { [weak self] id in self?.switchToTab(id: id) },
         deactivateCurrentTab: { [weak self] in self?.deactivateCurrentTab() },
         sendToAgent: { [weak self] payload in self?.sendReviewToAgent(payload) ?? .failed }
@@ -431,10 +458,8 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             guard case .browser = self?.activeTab?.content else { return }
             self?.activeBrowserController?.reload()
         })
-        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Show Git Changes", category: "Git") { [weak self] in
-            self?.windowSession.showSidebar = true
-            self?.setSidebarMode(.changes)
-            self?.refreshHostingView()
+        commandRegistry.register(PaletteCommand(id: "git.showChanges", title: "Toggle Git Changes Panel", category: "Git") { [weak self] in
+            self?.toggleGitChangesPanel()
         })
         commandRegistry.register(PaletteCommand(id: "git.refresh", title: "Refresh Git Changes", category: "Git") { [weak self] in
             self?.gitChangesController.refreshStatus()
@@ -577,19 +602,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
         // Create the split container (shared across tabs — we swap its tree)
         let container = SplitContainerView(registry: SurfaceRegistry())
-        container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
-            self?.handleDividerDrag(
-                firstChildFirstLeafID: firstChildID,
-                secondChildFirstLeafID: secondChildID,
-                targetRatio: targetRatio,
-                direction: direction,
-                splitRect: splitRect
-            )
-        }
-        container.onActiveLeafChange = { [weak self] leafID in
-            self?.activeTab?.splitTree.focusedLeafID = leafID
-            self?.requestSave()
-        }
+        wireSplitContainerCallbacks(on: container)
         self.splitContainerView = container
 
         let mainContent = buildMainContentView()
@@ -992,19 +1005,18 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             commandRegistry: commandRegistry,
             splitContainerView: splitContainerView ?? SplitContainerView(registry: SurfaceRegistry()),
             activeBrowserController: activeBrowserController,
-            activeDiffState: gitChangesController.activeDiffState,
-            activeDiffSource: gitChangesController.activeDiffSource,
-            activeDiffReviewStore: gitChangesController.activeDiffReviewStore,
             recoveryBarModel: recoveryBarModel,
             approvalBannerModel: approvalBannerModel,
             sidebarMode: Binding(
                 get: { [weak self] in self?.windowSession.sidebarMode ?? .tabs },
-                set: { [weak self] in self?.setSidebarMode($0) }
+                set: { [weak self] in self?.windowSession.sidebarMode = $0 }
             ),
-            gitChangesState: windowSession.gitChangesState,
-            gitEntries: windowSession.gitEntries,
-            branchDeltaBase: windowSession.branchDeltaBase,
-            branchDeltaEntries: windowSession.branchDeltaEntries,
+            isGitChangesPanelOpen: gitChangesController.isChangesPanelVisible,
+            showGitChangesButton: {
+                if case .terminal = windowSession.activeGroup?.activeTab?.content { return true }
+                return false
+            }(),
+            onToggleGitChangesPanel: { [weak self] in self?.toggleGitChangesPanel() },
             onTabSelected: { [weak self] tabID in self?.switchToTab(id: tabID) },
             onGroupSelected: { [weak self] groupID in self?.switchToGroup(id: groupID) },
             onNewTab: { [weak self] in self?.createNewTab() },
@@ -1014,9 +1026,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             onTabRenamed: { [weak self] in self?.requestSave() },
             onToggleSidebar: { [weak self] in self?.toggleSidebar() },
             onDismissCommandPalette: { [weak self] in self?.dismissCommandPalette() },
-            onWorkingFileSelected: { [weak self] entry in self?.gitChangesController.handleWorkingFileSelected(entry) },
-            onBranchDeltaFileSelected: { [weak self] entry in self?.gitChangesController.handleBranchDeltaFileSelected(entry) },
-            onRefreshGitStatus: { [weak self] in self?.gitChangesController.refreshStatus() },
             onSidebarWidthChanged: { [weak self] width in self?.windowSession.sidebarWidth = width },
             onCollapseToggled: { [weak self] in self?.requestSave() },
             onCloseAllTabsInGroup: { [weak self] groupID in self?.closeAllTabsInGroup(id: groupID) },
@@ -1035,25 +1044,9 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 self.requestSave()
             },
             onSidebarDragCommitted: { [weak self] in self?.requestSave() },
-            onSubmitReview: { [weak self] in
-                guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.submitDiffReview(tabID: tab.id)
-            },
-            onDiscardReview: { [weak self] in
-                guard let self, let tab = self.activeTab else { return }
-                self.gitChangesController.discardReview(tabID: tab.id)
-            },
-            onSubmitAllReviews: { [weak self] in
-                self?.gitChangesController.submitAllDiffReviews()
-            },
-            onDiscardAllReviews: { [weak self] in
-                self?.gitChangesController.discardAllDiffReviews()
-            },
             onComposeOverlaySend: { [weak self] text in self?.sendComposeText(text) ?? false },
             onDismissComposeOverlay: { [weak self] in self?.dismissComposeOverlay() },
-            onComposeOverlayEscapePressed: { [weak self] in self?.forwardEscapeToTerminal() },
-            totalReviewCommentCount: gitChangesController.totalReviewCommentCount,
-            reviewFileCount: gitChangesController.reviewFileCount
+            onComposeOverlayEscapePressed: { [weak self] in self?.forwardEscapeToTerminal() }
         )
     }
 
@@ -1106,23 +1099,66 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     private func rebuildSplitContainer() {
         guard let tab = activeTab else { return }
         if let container = splitContainerView {
-            container.updateRegistry(tab.registry)
+            // Re-wired on EVERY rebuild, not only on creation. `setupUI()`
+            // runs unconditionally in `init` and already parked a container
+            // here, so the `else` branch below is unreachable in the running
+            // app -- wiring only there left every pane callback nil (dead
+            // file clicks, dead refresh/close buttons, `EmptyView` diff panes)
+            // for the whole window's life. These are all `[weak self]`
+            // forwarders, so reassigning them is idempotent and cheap.
+            // Deliberately ahead of `updateRegistry`, which tears down and
+            // relays pane hosting views.
+            wireSplitContainerCallbacks(on: container)
+            container.updateRegistry(tab.registry, tab: tab)
         } else {
-            let container = SplitContainerView(registry: tab.registry)
-            container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
-                self?.handleDividerDrag(
-                    firstChildFirstLeafID: firstChildID,
-                    secondChildFirstLeafID: secondChildID,
-                    targetRatio: targetRatio,
-                    direction: direction,
-                    splitRect: splitRect
-                )
-            }
-            container.onActiveLeafChange = { [weak self] leafID in
-                self?.activeTab?.splitTree.focusedLeafID = leafID
-                self?.requestSave()
-            }
+            let container = SplitContainerView(registry: tab.registry, tab: tab)
+            wireSplitContainerCallbacks(on: container)
             self.splitContainerView = container
+        }
+    }
+
+    /// Every callback `SplitContainerView` needs from this controller, in
+    /// one place so the create-a-container and reuse-the-container paths
+    /// cannot diverge. `onDeferredLayoutComplete` is deliberately NOT here:
+    /// it is a one-shot continuation `attemptFocusRestore` installs
+    /// situationally, and clobbering it on every rebuild would drop a
+    /// pending focus restore.
+    private func wireSplitContainerCallbacks(on container: SplitContainerView) {
+        container.onTargetRatioChange = { [weak self] firstChildID, secondChildID, targetRatio, direction, splitRect in
+            self?.handleDividerDrag(
+                firstChildFirstLeafID: firstChildID,
+                secondChildFirstLeafID: secondChildID,
+                targetRatio: targetRatio,
+                direction: direction,
+                splitRect: splitRect
+            )
+        }
+        container.onActiveLeafChange = { [weak self] leafID in
+            self?.activeTab?.splitTree.focusedLeafID = leafID
+            self?.requestSave()
+        }
+        container.gitChangesController = gitChangesController
+        container.onWorkingFileSelected = { [weak self] entry in
+            self?.gitChangesController.handleWorkingFileSelected(entry)
+        }
+        container.onBranchDeltaFileSelected = { [weak self] entry in
+            self?.gitChangesController.handleBranchDeltaFileSelected(entry)
+        }
+        container.onRefreshGitChanges = { [weak self] in self?.gitChangesController.refreshStatus() }
+        container.onSubmitReview = { [weak self] leafID in
+            self?.gitChangesController.submitDiffReview(leafID: leafID)
+        }
+        container.onDiscardReview = { [weak self] leafID in
+            self?.gitChangesController.discardReview(leafID: leafID)
+        }
+        container.onSubmitAllReviews = { [weak self] in self?.gitChangesController.submitAllDiffReviews() }
+        container.onDiscardAllReviews = { [weak self] in self?.gitChangesController.discardAllDiffReviews() }
+        container.onClosePane = { [weak self] leafID in
+            guard let self else { return }
+            guard let group = self.windowSession.groups.first(where: { g in
+                g.tabs.contains(where: { $0.paneContent[leafID] != nil })
+            }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
+            self.closePane(tab: tab, group: group, leafID: leafID)
         }
     }
 
@@ -1171,13 +1207,52 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                     self?.window?.makeFirstResponder(bv)
                 }
             }
-        case .diff:
-            break  // Diff tabs don't need special activation
         }
         retargetComposeOverlayIfNeeded()
-        if gitChangesController.isSidebarVisible {
-            gitChangesController.refreshStatus()
+        if gitChangesController.isChangesPanelVisible {
+            // `showsLoadingState: false` unless this tab has never resolved
+            // its repo -- mirrors `toggleChangesPanel()`'s re-open branch.
+            // A tab whose panel was already open has last-good `gitEntries`
+            // cached on it, so re-activating it must show that immediately
+            // (no spinner flash overwriting the list) while the background
+            // refresh brings it up to date. Also means `fetchOrigin` (gated
+            // on `showsLoadingState`) is skipped here -- ahead/behind can go
+            // briefly stale until a manual refresh, same tradeoff FSEvents-
+            // triggered silent refreshes already make.
+            gitChangesController.refreshStatus(showsLoadingState: tab.repoRoot == nil)
+        } else {
+            // The tab being left behind may have had its own changes panel
+            // open with a live FSEvents watch on its repo (`toggleChangesPanel`
+            // starts that watch on open but only stops it when THAT tab's
+            // panel is closed, not when focus merely moves elsewhere).
+            // Reconcile monitor state to the newly active tab here: since
+            // this branch means the new tab's panel isn't open, nothing
+            // should still be watched.
+            reconcileGitChangesMonitor(for: tab)
         }
+    }
+
+    /// Stops the live `GitChangesMonitor` if the ACTIVE tab's changes panel
+    /// is not open. Extracted from this method's own inline logic (Task 10)
+    /// so `closePane` can share it: closing a `.gitChanges` pane via its own
+    /// close button (rather than the `toggleChangesPanel()` toolbar toggle,
+    /// which already calls `stopMonitoring` itself) used to leave the panel's
+    /// FSEvents watch running forever, since nothing else stopped it.
+    ///
+    /// Deliberately one-directional -- it only ever STOPS the monitor, never
+    /// starts one or triggers a refresh. `GitChangesController`'s monitor
+    /// operations are scoped to `windowSession.activeGroup?.activeTab`
+    /// (`isChangesPanelVisible`, `refreshStatus`, `stopMonitoring` all read
+    /// or act on that), so a caller here must itself already know `tab` is
+    /// the active tab -- `activateCurrentTab()` always does by construction;
+    /// `closePane` checks explicitly before calling this. Folding the
+    /// "still open -> refresh" branch in here too would make closing an
+    /// unrelated diff pane (panel elsewhere in the same tab still open)
+    /// silently kick off a fresh `git status` as a side effect, which
+    /// `closePane` has no reason to trigger.
+    private func reconcileGitChangesMonitor(for tab: Tab) {
+        guard !gitChangesController.isChangesPanelVisible else { return }
+        gitChangesController.stopMonitoring(cancelRefresh: false)
     }
 
     private func deactivateCurrentTab() {
@@ -1524,6 +1599,23 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         createBrowserTab(url: url)
     }
 
+    /// Shared by `closeTab` (aggregating across every diff pane in the
+    /// closing tab) and `closePane` (a single diff pane) -- `fileCount`
+    /// is nil for the single-pane case, where "file(s)" would be
+    /// redundant with "This diff".
+    private func unsentCommentsAlert(commentCount: Int, fileCount: Int? = nil) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = "Unsent Review Comments"
+        if let fileCount {
+            alert.informativeText = "This tab has \(commentCount) unsent review comment(s) across \(fileCount) file(s). Closing will discard them."
+        } else {
+            alert.informativeText = "This diff has \(commentCount) unsent review comment(s). Closing will discard them."
+        }
+        alert.addButton(withTitle: "Discard & Close")
+        alert.addButton(withTitle: "Cancel")
+        return alert
+    }
+
     private func closeTab(id tabID: UUID) {
         // Prevent double execution
         guard !closingTabIDs.contains(tabID) else { return }
@@ -1544,13 +1636,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             }
         }
 
-        // Check for unsent review comments
-        if let store = gitChangesController.reviewStore(for: tabID), store.hasUnsubmittedComments {
-            let alert = NSAlert()
-            alert.messageText = "Unsent Review Comments"
-            alert.informativeText = "This diff tab has \(store.comments.count) unsent review comment(s). Closing will discard them."
-            alert.addButton(withTitle: "Discard & Close")
-            alert.addButton(withTitle: "Cancel")
+        // Check for unsent review comments across every diff pane in this tab
+        let diffLeavesWithComments = tab.paneContent.keys.filter { leafID in
+            gitChangesController.reviewStore(for: leafID)?.hasUnsubmittedComments ?? false
+        }
+        if !diffLeavesWithComments.isEmpty {
+            let totalComments = diffLeavesWithComments.reduce(0) { $0 + (gitChangesController.reviewStore(for: $1)?.comments.count ?? 0) }
+            let alert = unsentCommentsAlert(commentCount: totalComments, fileCount: diffLeavesWithComments.count)
             let response = alert.runModal()
             if response != .alertFirstButtonReturn {
                 closingTabIDs.remove(tabID)
@@ -1561,8 +1653,15 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         // Clean up browser controller if present
         browserControllers.removeValue(forKey: tabID)
 
-        // Clean up diff state
-        gitChangesController.closeDiffTab(tabID)
+        // Clean up every diff/changes pane this tab holds -- diff panes
+        // are `paneContent` leaves inside the tab's own `splitTree` now
+        // (Task 4), not sibling tabs, so there is no single "this tab's
+        // diff tab" to close; every leaf must be visited. Snapshotted
+        // via Array(...) since `closeDiffPane` mutates `tab.paneContent`
+        // when `tab` is the active tab.
+        for leafID in Array(tab.paneContent.keys) {
+            gitChangesController.closeDiffPane(leafID)
+        }
 
         // Destroy all surfaces in the tab, killing any persistent
         // session each was attached to (R8-F, tearDownSurfaces): an
@@ -1682,9 +1781,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         for tabID in tabIDs {
             browserControllers.removeValue(forKey: tabID)
         }
-        // Clean up diff states for all tabs in this group
-        for tabID in tabIDs {
-            gitChangesController.closeDiffTab(tabID)
+        // Clean up every diff/changes pane in every tab of this group --
+        // see closeTab(id:)'s equivalent comment on why this is now a
+        // per-leaf loop rather than one closeDiffTab(tabID) call.
+        for tab in group.tabs {
+            for leafID in Array(tab.paneContent.keys) {
+                gitChangesController.closeDiffPane(leafID)
+            }
         }
 
         // Destroy all surfaces in all tabs of this group (killing any
@@ -1740,9 +1843,14 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             deactivateCurrentTab()
         }
 
-        for tabID in tabIDs {
-            browserControllers.removeValue(forKey: tabID)
-            gitChangesController.closeDiffTab(tabID)
+        // See closeTab(id:)'s equivalent comment: every diff/changes
+        // pane leaf in every tab of this group must be visited
+        // individually now, not one closeDiffTab(tabID) call per tab.
+        for tab in group.tabs {
+            browserControllers.removeValue(forKey: tab.id)
+            for leafID in Array(tab.paneContent.keys) {
+                gitChangesController.closeDiffPane(leafID)
+            }
         }
 
         for tab in group.tabs {
@@ -1782,11 +1890,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     @objc func toggleSidebar() {
         windowSession.showSidebar.toggle()
-        if gitChangesController.isSidebarVisible {
-            gitChangesController.refreshStatus()
-        } else {
-            gitChangesController.stopMonitoring()
-        }
         requestSave()
     }
 
@@ -1809,8 +1912,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             if let bv = activeBrowserController?.browserView {
                 window?.makeFirstResponder(bv)
             }
-        case .diff:
-            break
         }
     }
 
@@ -2271,6 +2372,118 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Closes ONE changes-list/diff pane (a `paneContent` leaf) --
+    /// the non-terminal counterpart to `closeSurfaceAndCleanUp`'s
+    /// single-surface close. A pane leaf CAN be the only leaf left in
+    /// `tab.splitTree` (e.g. the tab's last terminal surface already
+    /// exited while this pane was open -- see `closeSurfaceAndCleanUp`'s
+    /// own doc comment on that state); closing it here would otherwise
+    /// leave a leafless, unfocusable tab that lingers in the tab strip
+    /// with nothing to show and no in-place way to revive it (every
+    /// `splitCurrentSurface`-style entry point bails when
+    /// `focusedLeafID` is nil).
+    ///
+    /// So when removing this leaf empties `tab.splitTree`, this method
+    /// hands off to `closeTab(id:)` (the same path `Cmd+W` uses)
+    /// instead of leaving that tab behind. This is NOT the same
+    /// "would skip the quit-confirmation gate" concern that keeps
+    /// `closeSurfaceAndCleanUp`'s own empty-tree branch from doing the
+    /// same: `closeSurfaceAndCleanUp` inlines its own
+    /// `windowSession.removeTab` call for a process-initiated close
+    /// (a shell exiting can't be gated behind a user-facing "quit?"
+    /// prompt), but `closeTab(id:)` -- a *user*-initiated close, same
+    /// as this pane's close button -- already runs
+    /// `confirmQuitBeforeCloseIfWouldTerminate()` before touching
+    /// anything (see its own body, guard above the unsent-review
+    /// check). Routing through it is therefore safe even for the last
+    /// pane in the last tab of the last window. (An earlier version of
+    /// this comment claimed the opposite -- that reusing a window-
+    /// closing path here would skip that gate entirely -- which was
+    /// wrong: `closeTab(id:)` has always had it.)
+    ///
+    /// That hand-off is asked FIRST, against a throwaway `remove(leafID)`
+    /// result, before anything is actually destroyed. Ordering matters:
+    /// `closeTab(id:)`'s quit-confirmation gate is cancellable, and the
+    /// earlier arrangement (destroy the pane, empty `splitTree`, *then*
+    /// call `closeTab`) left a cancelled prompt with the tab still open
+    /// and its last pane already gone -- precisely the zombie state this
+    /// whole mechanism exists to prevent. It also double-prompted about
+    /// unsent review comments: once here for the single pane, then again
+    /// inside `closeTab(id:)` for the same pane tab-wide. Both are the
+    /// hand-off branch's problem only; the ordinary "tab keeps living"
+    /// path below is unchanged.
+    ///
+    /// The unsent-review-comment check below covers the leaf being closed
+    /// here on that ordinary path. On the hand-off path `closeTab(id:)`
+    /// runs its own tab-wide check (Task 6 fixed it to be keyed by leaf,
+    /// so it does cover this leaf), which is why this one is skipped there.
+    ///
+    /// `gitChangesController.closeDiffPane(leafID)` only removes the
+    /// leaf from the ACTIVE tab's `paneContent` (see that method's own
+    /// doc comment), so `tab.paneContent.removeValue(forKey:)` below is
+    /// not redundant: it is what actually cleans up `paneContent` when
+    /// `tab` here is not the active tab.
+    private func closePane(tab: Tab, group: TabGroup, leafID: UUID) {
+        // Nothing has been destroyed yet at this point -- see the ordering
+        // paragraph above.
+        if tab.splitTree.remove(leafID).tree.isEmpty {
+            closeTab(id: tab.id)
+            return
+        }
+
+        if let store = gitChangesController.reviewStore(for: leafID), store.hasUnsubmittedComments {
+            let alert = unsentCommentsAlert(commentCount: store.comments.count)
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+
+        gitChangesController.closeDiffPane(leafID)
+        tab.paneContent.removeValue(forKey: leafID)
+        let (newTree, focusTarget) = tab.splitTree.remove(leafID)
+        tab.splitTree = newTree
+
+        if tab.id == activeTab?.id {
+            splitContainerView?.updateLayout(tree: tab.splitTree)
+            // Mirrors `closeSurfaceAndCleanUp`'s own restore: a diff
+            // pane's close button can itself have grabbed first
+            // responder on click, and AppKit does not retarget it to
+            // some other view on its own once the pane's NSHostingView
+            // is removed from the hierarchy above -- without this, the
+            // terminal the pane was split against goes deaf to
+            // keystrokes until the user clicks back into it. `remove`
+            // hands back exactly that sibling leaf as `focusTarget`.
+            if let focusID = focusTarget, let focusView = tab.registry.view(for: focusID) {
+                window?.makeFirstResponder(focusView)
+            }
+            // The pane just removed may have been the tab's `.gitChanges`
+            // leaf itself (its own close button, not the toolbar toggle
+            // that already stops the monitor) -- if so, this was the
+            // ACTIVE tab's last thing keeping a live FSEvents watch on its
+            // repo. Only meaningful when `tab` is the active tab, same as
+            // `reconcileGitChangesMonitor`'s own scoping.
+            reconcileGitChangesMonitor(for: tab)
+        }
+        refreshHostingView()
+        requestSave()
+    }
+
+    #if DEBUG
+    /// Test seam mirroring `_setBrowserControllerForTesting`'s/
+    /// `_closingTabIDsForTesting`'s naming convention: `closePane`
+    /// itself is `private` with its only production call site being
+    /// `SplitContainerView.onClosePane`'s closure inside
+    /// `rebuildSplitContainer()` (which needs a live, on-screen
+    /// container to fire), so there is no other way to drive it
+    /// directly from a test. Reproduces that closure's own
+    /// group/tab-by-leafID lookup rather than requiring the caller to
+    /// already have them. DO NOT use from production code.
+    func _closePaneForTesting(leafID: UUID) {
+        guard let group = windowSession.groups.first(where: { g in
+            g.tabs.contains(where: { $0.paneContent[leafID] != nil })
+        }), let tab = group.tabs.first(where: { $0.paneContent[leafID] != nil }) else { return }
+        closePane(tab: tab, group: group, leafID: leafID)
+    }
+    #endif
+
     // MARK: - Session Reconnect
 
     /// `GHOSTTY_ACTION_SHOW_CHILD_EXITED` for a persistent-session
@@ -2697,7 +2910,16 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         default: focusDir = .next
         }
 
-        guard let targetID = tab.splitTree.focusTarget(for: focusDir, from: surfaceID) else { return }
+        // Terminal leaves only. `tab.paneContent`'s keys are the tab's
+        // git-changes/diff pane leaves; they have no ghostty surface, so
+        // pointing `focusedLeafID` at one strands AppKit first responder --
+        // `makeFirstResponder` below is skipped (no registered view), the
+        // terminal never gets it back, and keystrokes go nowhere until the
+        // user clicks. Same "pane leaves are not focus candidates" filter
+        // `sendReviewToAgent` applies to its target list.
+        guard let targetID = tab.splitTree.focusTarget(
+            for: focusDir, from: surfaceID, excluding: Set(tab.paneContent.keys)
+        ) else { return }
         tab.splitTree.focusedLeafID = targetID
 
         if let targetView = tab.registry.view(for: targetID) {
@@ -2853,7 +3075,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         let changed = owningTab.pwd != pwd
         owningTab.pwd = pwd
         requestSave()
-        if changed, owningTab.id == activeTab?.id, gitChangesController.isSidebarVisible {
+        if changed, owningTab.id == activeTab?.id, gitChangesController.isChangesPanelVisible {
             gitChangesController.refreshStatus()
         }
         if changed {
@@ -3282,8 +3504,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             if let bv = activeBrowserController?.browserView {
                 window?.makeFirstResponder(bv)
             }
-        } else if case .diff = activeTab?.content {
-            // No special focus needed for diff tabs
         } else {
             focusedController?.setFocus(true)
             restoreFocus()
@@ -3484,13 +3704,41 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     // MARK: - Git Source Control
 
-    private func setSidebarMode(_ mode: SidebarMode) {
-        windowSession.sidebarMode = mode
-        if gitChangesController.isSidebarVisible {
-            gitChangesController.refreshStatus()
-        } else {
-            gitChangesController.stopMonitoring()
+    /// Opens/closes the active tab's git-changes panel, for both the
+    /// `git.showChanges` palette command and the tab bar's changes button.
+    ///
+    /// `toggleChangesPanel()`'s own `refresh()` already re-syncs the split
+    /// layout (see `gitChangesController`'s `refresh` closure at the top of
+    /// this file), so all that's left here is AppKit first responder, which
+    /// only this controller owns: on close, AppKit does not retarget first
+    /// responder away from the removed pane's `NSHostingView` on its own --
+    /// the same reason `closePane`/`closeSurfaceAndCleanUp` restore it
+    /// explicitly -- and the terminal would go deaf to keystrokes until
+    /// clicked. `toggleChangesPanel()` leaves `focusedLeafID` naming the
+    /// leaf that should hold focus in both directions, so one restore
+    /// covers open and close alike (a no-op on open, where the terminal
+    /// already has it).
+    ///
+    /// The leading `closingChangesPanelWouldEmptyTree()` check is the toggle
+    /// route's half of the zombie-tab fix `closePane` already carries: a tab
+    /// whose only terminal has exited survives on its still-open changes panel
+    /// alone, so closing that panel removes its last `splitTree` leaf and
+    /// leaves a tab rendering nothing. `GitChangesController` does not close
+    /// tabs, so the handoff to `closeTab(id:)` lives here. Deliberately asked
+    /// BEFORE calling `toggleChangesPanel()`: `closeTab(id:)` gates on
+    /// `confirmQuitBeforeCloseIfWouldTerminate()`, and cancelling that prompt
+    /// must leave the panel open rather than already-removed from a tab that
+    /// is still around.
+    private func toggleGitChangesPanel() {
+        if let tab = activeTab, gitChangesController.closingChangesPanelWouldEmptyTree() {
+            closeTab(id: tab.id)
+            return
         }
+        gitChangesController.toggleChangesPanel()
+        guard let tab = activeTab,
+              let focusID = tab.splitTree.focusedLeafID,
+              let focusView = tab.registry.view(for: focusID) else { return }
+        window?.makeFirstResponder(focusView)
     }
 
     // MARK: - IPC
@@ -3622,7 +3870,15 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     /// Returns true if a terminal tab title indicates it is running one of the
     /// supported AI agents (Claude Code, Codex, OpenCode, Hermes). Centralizes
-    /// the title-substring check used by both compose and review send paths.
+    /// the title-substring check used by the compose-overlay send path
+    /// (`sendComposeText`) to decide paste timing (double- vs single-Enter),
+    /// and by `sendReviewToAgent` -- via
+    /// `reviewSendNeedsAgentConfirmation(title:)` -- to decide whether to ask
+    /// first. Note the two uses are different in kind: for `sendComposeText`
+    /// this selects *timing*, never whether to send; for review submission it
+    /// gates a soft confirmation only. Neither is target *selection* -- review
+    /// submission still always targets a terminal leaf of the active tab and
+    /// never scans other tabs by title.
     /// Keep the agent list in sync with `IPCConfigResult` axes.
     private static func isAIAgentTitle(_ title: String) -> Bool {
         title.localizedCaseInsensitiveContains("claude") ||
@@ -3631,59 +3887,91 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         title.localizedCaseInsensitiveContains("hermes")
     }
 
-    private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
-        // Find terminal tabs running a supported AI agent.
-        let agentTabs = windowSession.groups.flatMap(\.tabs).filter {
-            guard case .terminal = $0.content else { return false }
-            return Self.isAIAgentTitle($0.title)
-        }
+    /// Whether `sendReviewToAgent` should show its "this doesn't look like an
+    /// AI agent" confirmation before pasting a review payload.
+    ///
+    /// Why this exists: the old cross-tab title-*scanning* mechanism was
+    /// (correctly) deleted, but it incidentally also carried the only guard
+    /// against pasting a multi-line review prompt plus two Enters into a
+    /// plain shell. Same-tab targeting stays exactly as it is; this only adds
+    /// a dismissible "send anyway?" step.
+    ///
+    /// Split out as a pure function because `NSAlert.runModal()` cannot run
+    /// under XCTest -- this is the seam the tests exercise, mirroring how the
+    /// unsent-review-comment alert paths are tested by asserting their
+    /// predicate rather than driving the modal.
+    static func reviewSendNeedsAgentConfirmation(title: String) -> Bool {
+        !isAIAgentTitle(title)
+    }
 
-        guard !agentTabs.isEmpty else {
-            showIPCAlert(title: "No AI Agent", message: "No terminal tabs running Claude Code, Codex, OpenCode, or Hermes found. Start an AI agent first.")
+    /// Sends a review payload to a terminal pane in the *active tab* --
+    /// never a cross-tab/cross-group search. Diff panes and the terminal
+    /// they're reviewing always live together as leaves in the same tab's
+    /// `splitTree` (Task 4), so the only ambiguity left is which terminal
+    /// leaf to target when the tab has more than one.
+    ///
+    /// Targeting is title-blind, but the SEND is not: when the tab's title
+    /// doesn't look like an AI agent
+    /// (`reviewSendNeedsAgentConfirmation(title:)`) the user is asked to
+    /// confirm, since the payload is a multi-line review prompt followed by
+    /// two Enters and a plain shell would try to execute it. Cancelling
+    /// returns `.cancelled`, the same result the multi-terminal picker's
+    /// Cancel button produces.
+    ///
+    /// Known limitation: `Tab.title` tracks the tab's *focused* surface (see
+    /// `handleSetTitleNotification`) and there is no per-leaf title in this
+    /// codebase (`SurfaceView.title` is never assigned), so on a multi-terminal
+    /// tab the check reads the focused pane's title rather than the picked
+    /// one's. Acceptable for a soft confirmation: the cost of a wrong read is
+    /// one dismissible dialog in either direction.
+    private func sendReviewToAgent(_ payload: String) -> ReviewSendResult {
+        guard let tab = activeTab else { return .failed }
+        let terminalLeaves = tab.splitTree.allLeafIDs().filter { tab.paneContent[$0] == nil }
+
+        guard !terminalLeaves.isEmpty else {
+            showIPCAlert(title: "No Terminal", message: "This tab has no terminal pane to send the review to.")
             return .failed
         }
 
-        // Select target tab
-        let targetTab: Tab
-        if agentTabs.count == 1 {
-            targetTab = agentTabs[0]
+        let targetLeafID: UUID
+        if terminalLeaves.count == 1 {
+            targetLeafID = terminalLeaves[0]
         } else {
             let alert = NSAlert()
-            alert.messageText = "Select AI Agent Tab"
-            alert.informativeText = "Choose which AI agent instance to send the review to:"
+            alert.messageText = "Select Terminal Pane"
+            alert.informativeText = "This tab has multiple terminal panes -- choose which one to send the review to:"
             alert.addButton(withTitle: "Send")
             alert.addButton(withTitle: "Cancel")
 
             let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-            for (i, tab) in agentTabs.enumerated() {
-                let groupName = windowSession.groups.first { $0.tabs.contains { $0.id == tab.id } }?.name ?? ""
-                let label = "\(tab.titleOverride ?? tab.title) — \(groupName) (#\(i + 1))"
-                popup.addItem(withTitle: label)
+            for (i, leafID) in terminalLeaves.enumerated() {
+                popup.addItem(withTitle: "Pane #\(i + 1)")
+                popup.lastItem?.representedObject = leafID
             }
             alert.accessoryView = popup
 
-            let response = alert.runModal()
-            guard response == .alertFirstButtonReturn else { return .cancelled }
-
-            let selectedIndex = popup.indexOfSelectedItem
-            guard selectedIndex >= 0, selectedIndex < agentTabs.count else { return .failed }
-            targetTab = agentTabs[selectedIndex]
+            guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
+            guard let selected = popup.selectedItem?.representedObject as? UUID else { return .failed }
+            targetLeafID = selected
         }
 
-        // Send review text to terminal PTY via ghostty surface
-        guard let focusedID = targetTab.splitTree.focusedLeafID,
-              let controller = targetTab.registry.controller(for: focusedID) else {
+        guard let controller = tab.registry.controller(for: targetLeafID) else {
             showIPCAlert(title: "Send Failed", message: "Could not access terminal surface.")
             return .failed
         }
 
+        if Self.reviewSendNeedsAgentConfirmation(title: tab.title) {
+            let alert = NSAlert()
+            alert.messageText = "Not an AI Agent?"
+            alert.informativeText = "\"\(tab.title)\" doesn't look like an AI agent. The review will be pasted and submitted with Enter. Send anyway?"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "Send Anyway")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return .cancelled }
+        }
+
         controller.sendText(payload)
-        // Send Enter twice: first to confirm paste, second to submit
         sendSyntheticReturn(controller: controller, double: true)
-
-        // Switch to the target terminal tab
-        switchToTab(id: targetTab.id)
-
         return .sent
     }
 

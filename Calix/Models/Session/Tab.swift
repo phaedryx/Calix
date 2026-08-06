@@ -8,6 +8,10 @@ import Foundation
 enum TabContent: Sendable {
     case terminal
     case browser(url: URL)
+}
+
+enum TabPaneKind: Equatable, Sendable {
+    case gitChanges
     case diff(source: DiffSource)
 }
 
@@ -40,6 +44,19 @@ class Tab: Identifiable {
     /// `Tab.snapshot()` (as `nil` when empty) and restored back by
     /// `Tab.init(snapshot:)`.
     var sessionRefs: [UUID: SessionRef]
+    /// Non-terminal content for a `splitTree` leaf. A leaf present here
+    /// renders as a changes-list or diff pane; a leaf absent from it is a
+    /// terminal surface via `registry` (today's only case).
+    var paneContent: [UUID: TabPaneKind] = [:]
+    var gitChangesState: GitChangesState = .notLoaded
+    var gitEntries: [GitFileEntry] = []
+    var branchDeltaBase: String?
+    var branchDeltaEntries: [BranchDiffEntry] = []
+    /// The work tree this tab's changes/diff panes belong to. Resolved once
+    /// from `pwd` when `refreshStatus()` first succeeds for this tab — no
+    /// fallback scan of other tabs, because ambiguity here was exactly the
+    /// bug this design removes.
+    var repoRoot: String?
 
     init(
         id: UUID = UUID(),
