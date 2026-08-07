@@ -3024,14 +3024,29 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             AgentRegistry.shared.handleTitleChange(surfaceID: surfaceID, title: title)
         }
 
-        guard let tab = activeTab else { return }
+        // Resolve the tab that actually owns this surface -- NOT just
+        // activeTab. A background tab's title (and thus the sidebar's
+        // isWorking/yellow signal, which reads raw tab.title) must keep
+        // tracking live title-set events even while it isn't on screen;
+        // otherwise a spinner glyph present the moment the tab loses
+        // focus freezes there forever, since nothing re-syncs the title
+        // when the tab is later reselected. Still gated on being that
+        // tab's own focused leaf, same as before, so an unfocused split
+        // within a multi-pane tab can't stomp the tab-level title.
+        guard let (owningTab, _) = findTab(for: surfaceView) else { return }
 
-        if let focusedID = tab.splitTree.focusedLeafID,
-           let focusedView = tab.registry.view(for: focusedID),
-           focusedView === surfaceView {
-            tab.title = title
-            window?.title = tab.titleOverride ?? title
-            refreshHostingView()
+        guard let focusedID = owningTab.splitTree.focusedLeafID,
+              let focusedView = owningTab.registry.view(for: focusedID),
+              focusedView === surfaceView else { return }
+
+        owningTab.title = title
+        refreshHostingView()
+
+        // The real window-title text must still reflect only the active
+        // tab -- a background tab's title change shouldn't rename the
+        // window out from under whatever the user is currently looking at.
+        if owningTab.id == activeTab?.id {
+            window?.title = owningTab.titleOverride ?? title
         }
     }
 
