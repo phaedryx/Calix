@@ -10,7 +10,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .success,
             codex: .success,
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         XCTAssertTrue(result.anySucceeded)
     }
@@ -20,7 +21,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .success,
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         XCTAssertTrue(result.anySucceeded)
     }
@@ -30,7 +32,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .success,
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         XCTAssertTrue(result.anySucceeded)
     }
@@ -40,7 +43,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         XCTAssertFalse(result.anySucceeded)
     }
@@ -51,7 +55,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .failed(error),
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         XCTAssertFalse(result.anySucceeded)
     }
@@ -64,7 +69,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .success,
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         // Then
         XCTAssertTrue(result.anySucceeded,
@@ -72,16 +78,17 @@ final class IPCConfigManagerTests: XCTestCase {
     }
 
     func test_anySucceeded_allThreeSkipped() {
-        // Given: all four skipped
+        // Given: all five skipped
         let result = IPCConfigResult(
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         // Then
         XCTAssertFalse(result.anySucceeded,
-                       "anySucceeded should return false when all four are skipped")
+                       "anySucceeded should return false when all five are skipped")
     }
 
     func test_anySucceeded_openCodeFailedOthersSkipped() {
@@ -91,7 +98,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .failed(error),
-            hermes: .skipped(reason: "not installed")
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .skipped(reason: "not installed")
         )
         // Then
         XCTAssertFalse(result.anySucceeded,
@@ -105,7 +113,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .failed(error),
             codex: .failed(error),
             openCode: .success,
-            hermes: .failed(error)
+            hermes: .failed(error),
+            cursorAgent: .failed(error)
         )
         // Then
         XCTAssertTrue(result.anySucceeded,
@@ -120,7 +129,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .success
+            hermes: .success,
+            cursorAgent: .skipped(reason: "not installed")
         )
         // Then
         XCTAssertTrue(result.anySucceeded,
@@ -134,7 +144,8 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .skipped(reason: "not installed"),
             codex: .skipped(reason: "not installed"),
             openCode: .skipped(reason: "not installed"),
-            hermes: .failed(error)
+            hermes: .failed(error),
+            cursorAgent: .skipped(reason: "not installed")
         )
         // Then
         XCTAssertFalse(result.anySucceeded,
@@ -148,11 +159,52 @@ final class IPCConfigManagerTests: XCTestCase {
             claudeCode: .failed(error),
             codex: .failed(error),
             openCode: .failed(error),
-            hermes: .success
+            hermes: .success,
+            cursorAgent: .failed(error)
         )
         // Then
         XCTAssertTrue(result.anySucceeded,
                       "anySucceeded should return true when hermes succeeded despite other failures")
+    }
+
+    // MARK: - IPCConfigResult.anySucceeded (cursorAgent axis)
+
+    func test_anySucceeded_onlyCursorAgent() {
+        let result = IPCConfigResult(
+            claudeCode: .skipped(reason: "not installed"),
+            codex: .skipped(reason: "not installed"),
+            openCode: .skipped(reason: "not installed"),
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .success
+        )
+        XCTAssertTrue(result.anySucceeded,
+                      "anySucceeded should return true when only cursorAgent succeeded")
+    }
+
+    func test_anySucceeded_cursorAgentFailedOthersSkipped() {
+        let error = NSError(domain: "test", code: 6)
+        let result = IPCConfigResult(
+            claudeCode: .skipped(reason: "not installed"),
+            codex: .skipped(reason: "not installed"),
+            openCode: .skipped(reason: "not installed"),
+            hermes: .skipped(reason: "not installed"),
+            cursorAgent: .failed(error)
+        )
+        XCTAssertFalse(result.anySucceeded,
+                       "anySucceeded should return false when cursorAgent failed and others skipped")
+    }
+
+    func test_anySucceeded_cursorAgentSuccessOthersFailed() {
+        let error = NSError(domain: "test", code: 7)
+        let result = IPCConfigResult(
+            claudeCode: .failed(error),
+            codex: .failed(error),
+            openCode: .failed(error),
+            hermes: .failed(error),
+            cursorAgent: .success
+        )
+        XCTAssertTrue(result.anySucceeded,
+                      "anySucceeded should return true when cursorAgent succeeded despite other failures")
     }
 
     // MARK: - ConfigStatus pattern matching
@@ -183,5 +235,31 @@ final class IPCConfigManagerTests: XCTestCase {
         } else {
             XCTFail("Expected .failed")
         }
+    }
+
+    // MARK: - Preference gating (enableIPC respects AgentIPCSettings, disableIPC does not)
+
+    private let prefsSuiteName = "com.calix.tests.IPCConfigManagerTests.prefs"
+
+    func test_enableIPC_skipsAgentDisabledInSettings() {
+        AgentIPCSettings._testUseSuite(named: prefsSuiteName)
+        defer { AgentIPCSettings._testTeardownSuite(named: prefsSuiteName) }
+
+        AgentIPCSettings.setEnabled(false, for: .codex)
+
+        let result = IPCConfigManager.enableIPC(port: 1, token: "t")
+
+        guard case .skipped(let reason) = result.codex else {
+            XCTFail("Expected codex to be skipped when disabled in settings, got \(result.codex)")
+            return
+        }
+        XCTAssertEqual(reason, "disabled in settings")
+    }
+
+    @MainActor
+    func test_setAgentEnabled_returnsNilWhenServerNotRunning() {
+        XCTAssertFalse(CalixMCPServer.shared.isRunning,
+                       "Precondition: this test assumes no other test left the shared MCP server running")
+        XCTAssertNil(IPCConfigManager.setAgentEnabled(.claudeCode, enabled: true))
     }
 }

@@ -1,9 +1,14 @@
 // IPCConfigManager.swift
 // Calix
 //
-// Coordinates IPC config registration across Claude Code, Codex, OpenCode,
-// and Hermes, collecting results independently so one failure does not block
-// the others.
+// Coordinates IPC config registration across every IPCAgent, collecting
+// results independently so one agent failing does not block the
+// others. enableIPC() is gated per-agent by AgentIPCSettings; disableIPC()
+// is not -- unchecking an agent in Settings always removes its config
+// immediately (see AgentIPCSettings and SettingsWindowController's
+// per-agent switch handlers), so a disabled agent's on-disk entry can
+// never point at a stale port. See the design spec's truth table:
+// docs/superpowers/specs/2026-08-06-per-agent-ipc-checklist-and-cursor-agent-design.md
 
 import Foundation
 
@@ -52,12 +57,14 @@ struct IPCConfigResult: Sendable {
     let codex: ConfigStatus
     let openCode: ConfigStatus
     let hermes: ConfigStatus
+    let cursorAgent: ConfigStatus
 
     var anySucceeded: Bool {
         if case .success = claudeCode { return true }
         if case .success = codex { return true }
         if case .success = openCode { return true }
         if case .success = hermes { return true }
+        if case .success = cursorAgent { return true }
         return false
     }
 }
@@ -68,136 +75,117 @@ struct IPCConfigManager: Sendable {
 
     // MARK: - Public API
 
-    /// Enables IPC MCP server config in Claude Code, Codex, OpenCode, and Hermes config files.
-    /// Each tool is handled independently — one failing does not prevent the others.
+    /// Enables IPC MCP server config in every IPCAgent whose
+    /// AgentIPCSettings preference is `true`. An agent whose preference
+    /// is `false` is reported `.skipped(reason: "disabled in settings")`
+    /// without touching its config file at all. Each agent is handled
+    /// independently -- one failing does not prevent the others.
     static func enableIPC(port: Int, token: String) -> IPCConfigResult {
-        let claudeCode = enableClaudeCode(port: port, token: token)
-        let codex = enableCodex(port: port, token: token)
-        let openCode = enableOpenCode(port: port, token: token)
-        let hermes = enableHermes(port: port, token: token)
-        return IPCConfigResult(
-            claudeCode: claudeCode,
-            codex: codex,
-            openCode: openCode,
-            hermes: hermes
+        IPCConfigResult(
+            claudeCode: enableIfPreferred(.claudeCode, port: port, token: token),
+            codex: enableIfPreferred(.codex, port: port, token: token),
+            openCode: enableIfPreferred(.openCode, port: port, token: token),
+            hermes: enableIfPreferred(.hermes, port: port, token: token),
+            cursorAgent: enableIfPreferred(.cursorAgent, port: port, token: token)
         )
     }
 
-    /// Disables IPC MCP server config in Claude Code, Codex, OpenCode, and Hermes config files.
-    /// Does not check directory existence — the individual managers handle missing files as no-ops.
+    /// Disables IPC MCP server config in every IPCAgent, regardless of
+    /// AgentIPCSettings. Does not check directory existence -- the
+    /// individual managers handle missing files as no-ops.
     static func disableIPC() -> IPCConfigResult {
-        let claudeCode = disableClaudeCode()
-        let codex = disableCodex()
-        let openCode = disableOpenCode()
-        let hermes = disableHermes()
-        return IPCConfigResult(
-            claudeCode: claudeCode,
-            codex: codex,
-            openCode: openCode,
-            hermes: hermes
+        IPCConfigResult(
+            claudeCode: disableAgent(.claudeCode),
+            codex: disableAgent(.codex),
+            openCode: disableAgent(.openCode),
+            hermes: disableAgent(.hermes),
+            cursorAgent: disableAgent(.cursorAgent)
         )
     }
 
     /// Returns whether IPC is currently enabled in each tool's config.
-    static func isIPCEnabled() -> (claudeCode: Bool, codex: Bool, openCode: Bool, hermes: Bool) {
+    static func isIPCEnabled() -> (claudeCode: Bool, codex: Bool, openCode: Bool, hermes: Bool, cursorAgent: Bool) {
         (
-            claudeCode: ClaudeConfigManager.isIPCEnabled(),
-            codex: CodexConfigManager.isIPCEnabled(),
-            openCode: OpenCodeConfigManager.isIPCEnabled(),
-            hermes: HermesConfigManager.isIPCEnabled()
+            claudeCode: isAgentIPCEnabled(.claudeCode),
+            codex: isAgentIPCEnabled(.codex),
+            openCode: isAgentIPCEnabled(.openCode),
+            hermes: isAgentIPCEnabled(.hermes),
+            cursorAgent: isAgentIPCEnabled(.cursorAgent)
         )
     }
 
-    // MARK: - Private: Claude Code
+    /// Live single-agent write/remove for a Settings checkbox flipped
+    /// while the master IPC server is already running. Returns `nil`
+    /// when the server isn't running -- there is nothing to write yet,
+    /// since the AgentIPCSettings preference alone is enough until the
+    /// next "Enable AI Agent IPC". `enabled: false` always removes the
+    /// agent's config (same truth table as disableIPC) -- it is never
+    /// gated on the preference, since the preference is what's changing.
+    @MainActor
+    static func setAgentEnabled(_ agent: IPCAgent, enabled: Bool) -> ConfigStatus? {
+        guard CalixMCPServer.shared.isRunning else { return nil }
+        return enabled
+            ? enableAgent(agent, port: CalixMCPServer.shared.port, token: CalixMCPServer.shared.token)
+            : disableAgent(agent)
+    }
 
-    private static func enableClaudeCode(port: Int, token: String) -> ConfigStatus {
-        guard ConfigFileUtils.directoryExists(at: AgentToolPaths.claudeConfigDirectory) else {
+    // MARK: - Private
+
+    private static func enableIfPreferred(_ agent: IPCAgent, port: Int, token: String) -> ConfigStatus {
+        guard AgentIPCSettings.isEnabled(agent) else {
+            return .skipped(reason: "disabled in settings")
+        }
+        return enableAgent(agent, port: port, token: token)
+    }
+
+    private static func enableAgent(_ agent: IPCAgent, port: Int, token: String) -> ConfigStatus {
+        guard ConfigFileUtils.directoryExists(at: agent.configDirectory) else {
             return .skipped(reason: "not installed")
         }
         do {
-            try ClaudeConfigManager.enableIPC(port: port, token: token)
+            try enableIPCConfig(for: agent, port: port, token: token)
             return .success
         } catch {
             return .failed(error)
         }
     }
 
-    private static func disableClaudeCode() -> ConfigStatus {
+    private static func disableAgent(_ agent: IPCAgent) -> ConfigStatus {
         do {
-            try ClaudeConfigManager.disableIPC()
+            try disableIPCConfig(for: agent)
             return .success
         } catch {
             return .failed(error)
         }
     }
 
-    // MARK: - Private: Codex
-
-    private static func enableCodex(port: Int, token: String) -> ConfigStatus {
-        guard ConfigFileUtils.directoryExists(at: AgentToolPaths.codexConfigDirectory) else {
-            return .skipped(reason: "not installed")
-        }
-        do {
-            try CodexConfigManager.enableIPC(port: port, token: token)
-            return .success
-        } catch {
-            return .failed(error)
+    private static func isAgentIPCEnabled(_ agent: IPCAgent) -> Bool {
+        switch agent {
+        case .claudeCode: return ClaudeConfigManager.isIPCEnabled()
+        case .codex: return CodexConfigManager.isIPCEnabled()
+        case .openCode: return OpenCodeConfigManager.isIPCEnabled()
+        case .hermes: return HermesConfigManager.isIPCEnabled()
+        case .cursorAgent: return CursorAgentConfigManager.isIPCEnabled()
         }
     }
 
-    private static func disableCodex() -> ConfigStatus {
-        do {
-            try CodexConfigManager.disableIPC()
-            return .success
-        } catch {
-            return .failed(error)
+    private static func enableIPCConfig(for agent: IPCAgent, port: Int, token: String) throws {
+        switch agent {
+        case .claudeCode: try ClaudeConfigManager.enableIPC(port: port, token: token)
+        case .codex: try CodexConfigManager.enableIPC(port: port, token: token)
+        case .openCode: try OpenCodeConfigManager.enableIPC(port: port, token: token)
+        case .hermes: try HermesConfigManager.enableIPC(port: port, token: token)
+        case .cursorAgent: try CursorAgentConfigManager.enableIPC(port: port, token: token)
         }
     }
 
-    // MARK: - Private: OpenCode
-
-    private static func enableOpenCode(port: Int, token: String) -> ConfigStatus {
-        guard ConfigFileUtils.directoryExists(at: AgentToolPaths.openCodeConfigDirectory) else {
-            return .skipped(reason: "not installed")
-        }
-        do {
-            try OpenCodeConfigManager.enableIPC(port: port, token: token)
-            return .success
-        } catch {
-            return .failed(error)
-        }
-    }
-
-    private static func disableOpenCode() -> ConfigStatus {
-        do {
-            try OpenCodeConfigManager.disableIPC()
-            return .success
-        } catch {
-            return .failed(error)
-        }
-    }
-
-    // MARK: - Private: Hermes
-
-    private static func enableHermes(port: Int, token: String) -> ConfigStatus {
-        let hermesDir = NSHomeDirectory() + "/.hermes/"
-        guard ConfigFileUtils.directoryExists(at: hermesDir) else {
-            return .skipped(reason: "not installed")
-        }
-        do {
-            try HermesConfigManager.enableIPC(port: port, token: token)
-            return .success
-        } catch {
-            return .failed(error)
-        }
-    }
-
-    private static func disableHermes() -> ConfigStatus {
-        do {
-            try HermesConfigManager.disableIPC()
-            return .success
-        } catch {
-            return .failed(error)
+    private static func disableIPCConfig(for agent: IPCAgent) throws {
+        switch agent {
+        case .claudeCode: try ClaudeConfigManager.disableIPC()
+        case .codex: try CodexConfigManager.disableIPC()
+        case .openCode: try OpenCodeConfigManager.disableIPC()
+        case .hermes: try HermesConfigManager.disableIPC()
+        case .cursorAgent: try CursorAgentConfigManager.disableIPC()
         }
     }
 }

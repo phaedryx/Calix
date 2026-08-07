@@ -3839,6 +3839,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             configStatusLabel(result.codex, name: "Codex", verb: "configured"),
             configStatusLabel(result.openCode, name: "OpenCode", verb: "configured"),
             configStatusLabel(result.hermes, name: "Hermes", verb: "configured"),
+            configStatusLabel(result.cursorAgent, name: "Cursor Agent", verb: "configured"),
         ].joined(separator: "\n")
     }
 
@@ -3875,7 +3876,11 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     /// (double- vs single-Enter). Not used for target *selection* -- review
     /// submission always targets a terminal leaf of the active tab and never
     /// scans other tabs by title.
-    /// Keep the agent list in sync with `IPCConfigResult` axes.
+    /// cursor-agent is deliberately excluded here: this pass's cursor-agent
+    /// support is config-registration only (see IPCConfigResult.cursorAgent),
+    /// with no hooks/sidebar tracking, so there is no title-based detection
+    /// need for it yet. Keep the remaining agent list in sync with
+    /// IPCConfigResult's other four axes.
     private static func isAIAgentTitle(_ title: String) -> Bool {
         title.localizedCaseInsensitiveContains("claude") ||
         title.localizedCaseInsensitiveContains(AgentEntry.codexKind) ||
