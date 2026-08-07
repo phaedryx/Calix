@@ -15,6 +15,36 @@ enum ConfigStatus: Sendable {
     case failed(Error)
 }
 
+// MARK: - IPCAgent
+
+/// One agent CLI Calix can register its `calix-ipc` MCP server with.
+enum IPCAgent: String, CaseIterable, Sendable {
+    case claudeCode, codex, openCode, hermes, cursorAgent
+
+    var displayName: String {
+        switch self {
+        case .claudeCode: return "Claude Code"
+        case .codex: return "Codex"
+        case .openCode: return "OpenCode"
+        case .hermes: return "Hermes"
+        case .cursorAgent: return "Cursor Agent"
+        }
+    }
+
+    /// This agent's on-disk config-root directory. A missing directory
+    /// means the tool isn't installed, so IPCConfigManager skips it
+    /// rather than creating a config file for a tool that doesn't exist.
+    var configDirectory: String {
+        switch self {
+        case .claudeCode: return AgentToolPaths.claudeConfigDirectory
+        case .codex: return AgentToolPaths.codexConfigDirectory
+        case .openCode: return AgentToolPaths.openCodeConfigDirectory
+        case .hermes: return NSHomeDirectory() + "/.hermes/"
+        case .cursorAgent: return AgentToolPaths.cursorAgentConfigDirectory
+        }
+    }
+}
+
 // MARK: - IPCConfigResult
 
 struct IPCConfigResult: Sendable {

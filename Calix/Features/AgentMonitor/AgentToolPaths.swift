@@ -25,4 +25,9 @@ enum AgentToolPaths {
     static var openCodeConfigDirectory: String {
         NSHomeDirectory() + "/.config/opencode"
     }
+
+    /// cursor-agent's config root: `~/.cursor`.
+    static var cursorAgentConfigDirectory: String {
+        NSHomeDirectory() + "/.cursor"
+    }
 }
