@@ -50,6 +50,24 @@ final class AgentIPCSettingsTests: XCTestCase {
         }
     }
 
+    func test_isEnabled_installedDefaultsTrueWhenKeyNeverWritten() {
+        XCTAssertTrue(AgentIPCSettings.isEnabled(.claudeCode, installed: true))
+    }
+
+    func test_isEnabled_notInstalledDefaultsFalseWhenKeyNeverWritten() {
+        XCTAssertFalse(AgentIPCSettings.isEnabled(.claudeCode, installed: false))
+    }
+
+    func test_isEnabled_explicitValueWinsRegardlessOfInstalledStatus() {
+        AgentIPCSettings.setEnabled(true, for: .hermes)
+        XCTAssertTrue(AgentIPCSettings.isEnabled(.hermes, installed: false),
+                     "An explicit true must survive even if the tool is no longer installed")
+
+        AgentIPCSettings.setEnabled(false, for: .cursorAgent)
+        XCTAssertFalse(AgentIPCSettings.isEnabled(.cursorAgent, installed: true),
+                      "An explicit false must survive even if the tool is installed")
+    }
+
     func test_testStoreIsolation_neverTouchesStandardDefaults() {
         AgentIPCSettings.setEnabled(false, for: .claudeCode)
 

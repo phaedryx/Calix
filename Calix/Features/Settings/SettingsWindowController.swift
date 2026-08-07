@@ -377,9 +377,9 @@ class SettingsWindowController: NSWindowController {
     private func ipcAgentRow(_ agent: IPCAgent, accessibilityID: String) -> NSView {
         let toggleSwitch = NSSwitch()
         toggleSwitch.setAccessibilityIdentifier(accessibilityID)
-        toggleSwitch.state = AgentIPCSettings.isEnabled(agent) ? .on : .off
 
         let isInstalled = ConfigFileUtils.directoryExists(at: agent.configDirectory)
+        toggleSwitch.state = AgentIPCSettings.isEnabled(agent, installed: isInstalled) ? .on : .off
         toggleSwitch.isEnabled = isInstalled
 
         toggleSwitch.target = self

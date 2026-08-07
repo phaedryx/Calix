@@ -35,13 +35,19 @@ struct AgentIPCSettings: Sendable {
         "calix.ipc.\(agent.rawValue)Enabled"
     }
 
-    /// Documented default: `true` when the key has never been written --
-    /// same `object(forKey:) == nil` absence check as
-    /// CommandTrackingSettings.trackingEnabled.
-    static func isEnabled(_ agent: IPCAgent) -> Bool {
+    /// Documented default when the key has never been written: `installed`
+    /// (same `object(forKey:) == nil` absence check as
+    /// CommandTrackingSettings.trackingEnabled) -- an agent that isn't on
+    /// this machine has nothing meaningful to enable, so it defaults off;
+    /// an installed one defaults on, preserving pre-existing behavior for
+    /// every agent a user already has. `installed` defaults to `true` so
+    /// callers that don't know or care about install status (or a test
+    /// suite that can't assume any particular filesystem state) see the
+    /// original always-true-when-unset behavior.
+    static func isEnabled(_ agent: IPCAgent, installed: Bool = true) -> Bool {
         let key = key(for: agent)
         if store.object(forKey: key) == nil {
-            return true
+            return installed
         }
         return store.bool(forKey: key)
     }
