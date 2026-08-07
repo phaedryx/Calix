@@ -23,14 +23,8 @@ enum AccessibilityID {
         static func agentRow(id: UUID) -> String { "calix.sidebar.agentRow.\(id.uuidString)" }
         static let agentHooksIssuesBanner = "calix.sidebar.agentHooksIssuesBanner"
     }
-    enum TabBar {
-        static let container = "calix.tabBar"
-        static let newTabButton = "calix.tabBar.newTabButton"
-        static let gitChangesButton = "calix.tabBar.gitChangesButton"
-        static func tab(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString)" }
-        static func tabCloseButton(_ id: UUID) -> String { "calix.tabBar.tab.\(id.uuidString).closeButton" }
-        static func tabNameTextField(_ id: UUID) -> String { "calix.tabBar.tabNameTextField.\(id.uuidString)" }
-        static func tabAtIndex(_ index: Int) -> String { "calix.tabBar.tab.index.\(index)" }
+    enum Titlebar {
+        static let gitChangesButton = "calix.titlebar.gitChangesButton"
     }
     enum CommandPalette {
         static let container = "calix.commandPalette"

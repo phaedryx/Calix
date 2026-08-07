@@ -45,13 +45,12 @@ struct RecoveryBarView: View {
     }
 }
 
-/// Same glass-chrome treatment as `TabBarContentView`'s own
-/// `TabBarBackgroundModifier` (the closest existing precedent: another
-/// horizontal bar sitting directly above/adjacent to the tab strip,
-/// bottom-edge-separated from what follows it) -- ties this bar's
-/// look to the user's theme color + glass opacity instead of a fixed
-/// `.thinMaterial`, so it reads as part of the window chrome rather
-/// than a foreign overlay.
+/// Same glass-chrome treatment as `SidebarContentView`'s own
+/// `SidebarBackgroundModifier` (the closest existing precedent: another
+/// bar sitting directly adjacent to the tab list, edge-separated from
+/// what follows it) -- ties this bar's look to the user's theme color +
+/// glass opacity instead of a fixed `.thinMaterial`, so it reads as part
+/// of the window chrome rather than a foreign overlay.
 ///
 /// Deliberately does NOT apply its own `.glassEffect(...)` tint pass
 /// (unlike `TabBarBackgroundModifier`/`SidebarBackgroundModifier`,

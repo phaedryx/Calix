@@ -26,12 +26,6 @@ struct MainContentView: View {
     var approvalBannerModel: ApprovalBannerModel?
 
     @Binding var sidebarMode: SidebarMode
-    /// Active tab's git-changes panel state, for the tab bar's toggle
-    /// button. The panel itself renders as a `.gitChanges` pane inside
-    /// `splitContainerView`, not through this view.
-    var isGitChangesPanelOpen: Bool = false
-    var showGitChangesButton: Bool = false
-    var onToggleGitChangesPanel: (() -> Void)?
 
     var onTabSelected: ((UUID) -> Void)?
     var onGroupSelected: ((UUID) -> Void)?
@@ -110,7 +104,6 @@ struct MainContentView: View {
 
     private var mainContent: some View {
         let activeGroup = windowSession.activeGroup
-        let activeTabs = activeGroup?.tabs ?? []
         let activeTabID = activeGroup?.activeTabID
 
         return GlassEffectContainer {
@@ -151,24 +144,6 @@ struct MainContentView: View {
 
                 ZStack {
                     VStack(spacing: 0) {
-                        if !activeTabs.isEmpty {
-                            TabBarContentView(
-                                tabs: activeTabs,
-                                activeTabID: activeTabID,
-                                onTabSelected: onTabSelected,
-                                onNewTab: onNewTab,
-                                onCloseTab: onCloseTab,
-                                onMoveTab: activeGroup != nil
-                                    ? { from, to in onMoveTab?(activeGroup!.id, from, to) }
-                                    : nil,
-                                onTabRenamed: onTabRenamed,
-                                activeGroupID: activeGroup?.id,
-                                isGitChangesPanelOpen: isGitChangesPanelOpen,
-                                showGitChangesButton: showGitChangesButton,
-                                onToggleGitChangesPanel: onToggleGitChangesPanel
-                            )
-                        }
-
                         if let browserController = activeBrowserController {
                             BrowserContainerView(controller: browserController)
                         } else {

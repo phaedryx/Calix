@@ -1011,12 +1011,6 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 get: { [weak self] in self?.windowSession.sidebarMode ?? .tabs },
                 set: { [weak self] in self?.windowSession.sidebarMode = $0 }
             ),
-            isGitChangesPanelOpen: gitChangesController.isChangesPanelVisible,
-            showGitChangesButton: {
-                if case .terminal = windowSession.activeGroup?.activeTab?.content { return true }
-                return false
-            }(),
-            onToggleGitChangesPanel: { [weak self] in self?.toggleGitChangesPanel() },
             onTabSelected: { [weak self] tabID in self?.switchToTab(id: tabID) },
             onGroupSelected: { [weak self] groupID in self?.switchToGroup(id: groupID) },
             onNewTab: { [weak self] in self?.createNewTab() },
