@@ -43,16 +43,15 @@ final class GroupManagementUITests: CalixUITestCase {
     }
 
     func test_switchGroup() {
-        // Baseline: capture the ORIGINAL (first) group's own tab-bar tab
-        // identifier set before any second group exists, so switching
-        // back to it later can be proven by observing the SAME set
-        // reappear (TabBarContentView is fed exclusively from
-        // `windowSession.activeGroup?.tabs`, see
-        // `CalixUITestCase.currentTabBarTabIdentifiers()`'s own doc
+        // Baseline: capture the ORIGINAL (first) group's own active-group
+        // marker UUID before any second group exists, so switching back
+        // to it later can be proven by observing the SAME UUID reappear
+        // (see `CalixUITestCase.activeGroupIdentifier()`'s own doc
         // comment) -- not just that the group COUNT is unchanged, which
         // a no-op switch would also satisfy.
-        let firstGroupTabIdentifiers = currentTabBarTabIdentifiers()
-        XCTAssertEqual(firstGroupTabIdentifiers.count, 1, "Should start with exactly one tab in the first group")
+        let firstGroupID = activeGroupIdentifier()
+        XCTAssertNotNil(firstGroupID, "An active group should exist at launch")
+        XCTAssertEqual(countSidebarTabs(), 1, "Should start with exactly one tab in the first group")
 
         // Create a second group via command palette
         openCommandPaletteViaMenu()
@@ -79,12 +78,12 @@ final class GroupManagementUITests: CalixUITestCase {
 
         // The newly created second group becomes active on creation
         // (WindowSession/CalixWindowController.createNewGroup sets
-        // `activeGroupID` explicitly), so the tab bar should now show
-        // its OWN (different) tab, not the first group's.
-        let secondGroupTabIdentifiers = currentTabBarTabIdentifiers()
+        // `activeGroupID` explicitly), so the active-group marker should
+        // now report its OWN (different) UUID, not the first group's.
+        let secondGroupID = activeGroupIdentifier()
         XCTAssertNotEqual(
-            secondGroupTabIdentifiers, firstGroupTabIdentifiers,
-            "Creating a new group should make it active, so the tab bar should show its own tab, not the first group's"
+            secondGroupID, firstGroupID,
+            "Creating a new group should make it active, so the active-group marker should report the new group, not the first one"
         )
 
         groups.element(boundBy: 0).click()
@@ -94,11 +93,11 @@ final class GroupManagementUITests: CalixUITestCase {
         XCTAssertTrue(groups.element(boundBy: 0).exists, "First group should still exist after clicking")
 
         // The ACTIVE group must have actually switched back to the first
-        // group: the tab bar's visible tab set should match the baseline
+        // group: the active-group marker should report the baseline UUID
         // captured before the second group ever existed.
         XCTAssertEqual(
-            currentTabBarTabIdentifiers(), firstGroupTabIdentifiers,
-            "Clicking the first group should switch the active group back to it, so the tab bar shows its tab again"
+            activeGroupIdentifier(), firstGroupID,
+            "Clicking the first group should switch the active group back to it, so the active-group marker should report the first group's ID again"
         )
     }
 

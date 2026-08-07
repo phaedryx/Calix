@@ -17,9 +17,7 @@ enum AccessibilityID {
         static func tabCloseButton(_ id: UUID) -> String { "calix.sidebar.tab.\(id.uuidString).closeButton" }
         static func groupCloseAllButton(_ id: UUID) -> String { "calix.sidebar.group.\(id.uuidString).closeAllButton" }
         static func tabNameTextField(_ id: UUID) -> String { "calix.sidebar.tabNameTextField.\(id.uuidString)" }
-        static func tabAtIndex(_ groupID: UUID, _ index: Int) -> String {
-            "calix.sidebar.group.\(groupID.uuidString).tab.index.\(index)"
-        }
+        static func activeGroupMarker(_ id: UUID) -> String { "calix.sidebar.activeGroupMarker.\(id.uuidString)" }
         static func agentRow(id: UUID) -> String { "calix.sidebar.agentRow.\(id.uuidString)" }
         static let agentHooksIssuesBanner = "calix.sidebar.agentHooksIssuesBanner"
     }

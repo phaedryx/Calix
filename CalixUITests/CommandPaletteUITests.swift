@@ -48,7 +48,7 @@ final class CommandPaletteUITests: CalixUITestCase {
     }
 
     func test_executeCommand() {
-        let initialTabCount = countTabBarTabs()
+        let initialTabCount = countSidebarTabs()
 
         openCommandPaletteViaMenu()
 
@@ -69,7 +69,7 @@ final class CommandPaletteUITests: CalixUITestCase {
 
         // Tab count should increase
         Thread.sleep(forTimeInterval: 0.5)
-        let newTabCount = countTabBarTabs()
+        let newTabCount = countSidebarTabs()
         XCTAssertEqual(newTabCount, initialTabCount + 1, "Executing 'New Tab' should add a tab")
     }
 }

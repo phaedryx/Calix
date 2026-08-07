@@ -484,6 +484,23 @@ private struct GroupSectionView: View {
                 .onAssumeInsideHover($isHoveringHeader)
             }
 
+            // Exposes which group is currently active to XCUITest, now
+            // that the top tab strip (the previous source of this signal
+            // -- it only ever rendered the active group's tabs) is gone.
+            // A 1x1 `Color` view with a plain `.accessibilityIdentifier`
+            // is used deliberately instead of a custom
+            // `.accessibilityValue` on an existing element: confirmed
+            // during planning that XCUITest does not surface a custom
+            // accessibilityValue on these SwiftUI container elements in
+            // this app (see TabReorderUITests.swift's header comment),
+            // while plain identifiers reliably do. See
+            // CalixUITestCase.activeGroupIdentifier().
+            if isActiveGroup {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier(AccessibilityID.Sidebar.activeGroupMarker(group.id))
+            }
+
             // Tabs in this group (only show if not collapsed)
             if !group.isCollapsed {
                 VStack(spacing: 0) {
@@ -566,7 +583,6 @@ private struct GroupSectionView: View {
                         // `ClickContainerNSView` via `mouseDragged` /
                         // `mouseUp` to avoid a `PlatformGroupContainer`
                         // compositing layer that would intercept clicks.
-                        .accessibilityValue(AccessibilityID.Sidebar.tabAtIndex(group.id, index))
                     }
                 }
                 .coordinateSpace(name: "sidebarGroup-\(group.id.uuidString)")

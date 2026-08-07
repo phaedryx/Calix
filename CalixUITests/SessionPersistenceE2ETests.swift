@@ -204,8 +204,8 @@ final class SessionPersistenceE2ETests: CalixUITestCase {
 
     /// The visible title of every tab currently shown in the sidebar,
     /// mirroring `SessionBrowserAttachKillE2ETests.sidebarTabTitles()`
-    /// exactly (see that file's own doc comment for why the sidebar,
-    /// not the horizontal tab bar).
+    /// exactly (see that file's own doc comment for why it reads titles
+    /// via `StaticText.value` instead of an identifier-based count).
     private func sidebarTabTitles() -> Set<String> {
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@", "calix.sidebar.tab.", ".closeButton"))

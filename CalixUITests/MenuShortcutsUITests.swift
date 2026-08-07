@@ -406,14 +406,13 @@ final class MenuShortcutsUITests: CalixUITestCase {
     }
 
     func test_nextGroupViaMenu_switchesGroup() {
-        // Baseline: the first group's own tab-bar tab identifier set,
+        // Baseline: the first group's own active-group marker UUID,
         // captured before a second group exists, so a later switch BACK
-        // to it can be proven by observing the SAME set reappear
-        // (`CalixUITestCase.currentTabBarTabIdentifiers()`'s own doc
-        // comment: `TabBarContentView` is fed exclusively from
-        // `windowSession.activeGroup?.tabs`) -- not just that the group
-        // COUNT is unchanged, which a no-op switch would also satisfy.
-        let firstGroupTabIdentifiers = currentTabBarTabIdentifiers()
+        // to it can be proven by observing the SAME UUID reappear (see
+        // `CalixUITestCase.activeGroupIdentifier()`'s own doc comment) --
+        // not just that the group COUNT is unchanged, which a no-op
+        // switch would also satisfy.
+        let firstGroupID = activeGroupIdentifier()
 
         // まず 2 つ目のグループを作成
         openMenuBarItem("Window")
@@ -425,12 +424,12 @@ final class MenuShortcutsUITests: CalixUITestCase {
 
         XCTAssertEqual(observedAfterNew, 2, "Should have 2 groups after creating a new one")
 
-        // The newly created group becomes active on creation, so the tab
-        // bar should now show its own (different) tab.
-        let secondGroupTabIdentifiers = currentTabBarTabIdentifiers()
+        // The newly created group becomes active on creation, so the
+        // active-group marker should now report its own (different) UUID.
+        let secondGroupID = activeGroupIdentifier()
         XCTAssertNotEqual(
-            secondGroupTabIdentifiers, firstGroupTabIdentifiers,
-            "Creating a new group via the menu should make it active, so the tab bar should show its own tab"
+            secondGroupID, firstGroupID,
+            "Creating a new group via the menu should make it active, so the active-group marker should report the new group"
         )
 
         // Previous Group に切り替え
@@ -454,11 +453,11 @@ final class MenuShortcutsUITests: CalixUITestCase {
         )
 
         // The ACTIVE group must have actually switched back to the
-        // first group: the tab bar's visible tab set should match the
-        // baseline captured before the second group ever existed.
+        // first group: the active-group marker should report the
+        // baseline UUID captured before the second group ever existed.
         XCTAssertEqual(
-            currentTabBarTabIdentifiers(), firstGroupTabIdentifiers,
-            "Previous Group should switch the active group back to the first one, so the tab bar shows its tab again"
+            activeGroupIdentifier(), firstGroupID,
+            "Previous Group should switch the active group back to the first one, so the active-group marker should report it again"
         )
 
         // Next Group で戻れることも確認
@@ -478,10 +477,10 @@ final class MenuShortcutsUITests: CalixUITestCase {
         )
 
         // The ACTIVE group must have switched forward again, back to the
-        // second group's own tab.
+        // second group's own marker UUID.
         XCTAssertEqual(
-            currentTabBarTabIdentifiers(), secondGroupTabIdentifiers,
-            "Next Group should switch the active group forward to the second one, so the tab bar shows its tab again"
+            activeGroupIdentifier(), secondGroupID,
+            "Next Group should switch the active group forward to the second one, so the active-group marker should report it again"
         )
     }
 

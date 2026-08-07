@@ -20,7 +20,7 @@ final class TabRenameUITests: CalixUITestCase {
     private func createSecondTab() {
         createNewTabViaMenu()
         Thread.sleep(forTimeInterval: 1.0)
-        XCTAssertEqual(countTabBarTabs(), 2, "Should have two tabs after creating a new one")
+        XCTAssertEqual(countSidebarTabs(), 2, "Should have two tabs after creating a new one")
     }
 
     // MARK: - Tests

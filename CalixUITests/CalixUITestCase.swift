@@ -122,33 +122,39 @@ class CalixUITestCase: XCTestCase {
             .count
     }
 
-    func countTabBarTabs() -> Int {
-        // Match exactly "calix.tabBar.tab.<UUID>" and nothing else (no .closeButton suffix)
+    /// Every sidebar tab row currently on screen, across every group
+    /// (`calix.sidebar.tab.<UUID>`, excluding `.closeButton` children).
+    /// Correct as a tab-bar-equivalent count only when exactly one group
+    /// exists -- every current caller with a single group active. A
+    /// caller with multiple groups on screen wants `activeGroupIdentifier()`
+    /// instead, not this.
+    func countSidebarTabs() -> Int {
         let uuidPattern = "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"
-        let predicate = NSPredicate(format: "identifier MATCHES %@", "calix\\.tabBar\\.tab\\.\(uuidPattern)")
+        let predicate = NSPredicate(format: "identifier MATCHES %@", "calix\\.sidebar\\.tab\\.\(uuidPattern)")
         return app.descendants(matching: .any)
             .matching(predicate)
             .count
     }
 
-    /// The identifiers of every tab currently shown in the horizontal tab
-    /// bar (`calix.tabBar.tab.<UUID>`, excluding `.closeButton` children),
-    /// i.e. the tabs belonging to whichever group is CURRENTLY ACTIVE
-    /// (`MainContentView.mainContent` feeds `TabBarContentView` from
-    /// `windowSession.activeGroup?.tabs` alone, so switching the active
-    /// group changes exactly this set). Used to prove a group-switching
-    /// action actually moved the active group, rather than merely
-    /// leaving the group COUNT unchanged (which a no-op switch would also
-    /// satisfy).
-    func currentTabBarTabIdentifiers() -> Set<String> {
+    /// The UUID of whichever Workspace sidebar group is CURRENTLY ACTIVE,
+    /// read from the one-per-active-group marker element
+    /// `SidebarContentView.GroupSectionView` renders
+    /// (`calix.sidebar.activeGroupMarker.<UUID>`, see that file). `nil`
+    /// if no group is active yet (e.g. the app is still launching).
+    /// Replaces the pre-strip-removal `currentTabBarTabIdentifiers()`,
+    /// which proved an active-group switch by observing the tab-bar's
+    /// visible tab SET change; this proves the same switch by observing
+    /// the marker's UUID change instead, since the sidebar (unlike the
+    /// old strip) renders every group's tabs at once and has no
+    /// strip-equivalent "visible only for the active group" tab set.
+    func activeGroupIdentifier() -> String? {
         let uuidPattern = "[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}"
-        let predicate = NSPredicate(format: "identifier MATCHES %@", "calix\\.tabBar\\.tab\\.\(uuidPattern)")
-        return Set(
-            app.descendants(matching: .any)
-                .matching(predicate)
-                .allElementsBoundByIndex
-                .map { $0.identifier }
-        )
+        let predicate = NSPredicate(format: "identifier MATCHES %@", "calix\\.sidebar\\.activeGroupMarker\\.\(uuidPattern)")
+        let marker = app.descendants(matching: .any).matching(predicate).firstMatch
+        guard marker.exists else { return nil }
+        let prefix = "calix.sidebar.activeGroupMarker."
+        guard marker.identifier.hasPrefix(prefix) else { return nil }
+        return String(marker.identifier.dropFirst(prefix.count))
     }
 
     /// Fixed scratch directory the team lead reads screenshots from by

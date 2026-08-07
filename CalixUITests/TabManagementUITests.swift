@@ -6,7 +6,7 @@ import XCTest
 final class TabManagementUITests: CalixUITestCase {
 
     func test_initialState_hasOneTab() {
-        let tabCount = countTabBarTabs()
+        let tabCount = countSidebarTabs()
         XCTAssertEqual(tabCount, 1, "Initial state should have exactly one tab")
     }
 
@@ -16,7 +16,7 @@ final class TabManagementUITests: CalixUITestCase {
         // Wait for the second tab to appear
         Thread.sleep(forTimeInterval: 1.0)
 
-        let tabCount = countTabBarTabs()
+        let tabCount = countSidebarTabs()
         XCTAssertEqual(tabCount, 2, "Should have two tabs after creating a new one")
     }
 
@@ -24,7 +24,7 @@ final class TabManagementUITests: CalixUITestCase {
         // Create a second tab
         createNewTabViaMenu()
         Thread.sleep(forTimeInterval: 1.0)
-        XCTAssertEqual(countTabBarTabs(), 2, "Should have two tabs before closing")
+        XCTAssertEqual(countSidebarTabs(), 2, "Should have two tabs before closing")
 
         // Close the active tab via menu
         closeTabViaMenu()
@@ -32,7 +32,7 @@ final class TabManagementUITests: CalixUITestCase {
         // Wait for tab removal
         Thread.sleep(forTimeInterval: 1.0)
 
-        let tabCount = countTabBarTabs()
+        let tabCount = countSidebarTabs()
         XCTAssertEqual(tabCount, 1, "Should have one tab after closing")
     }
 

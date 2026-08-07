@@ -113,30 +113,16 @@ final class SessionBrowserAttachKillE2ETests: CalixUITestCase {
 
     /// The visible title (`tab.titleOverride ?? tab.title`, per
     /// `SidebarContentView.swift`'s own `visibleTitle`) of every tab
-    /// currently shown in the SIDEBAR (not the horizontal tab bar --
-    /// see below for why), read from each row's own descendant
-    /// `StaticText.value` (this codebase's established pattern for
-    /// hosted-SwiftUI text: exposed via `value`, not plain `label` --
-    /// same as `SessionBrowserRowView`'s row text, per this file's own
-    /// header comment).
+    /// currently shown in the sidebar, read from each row's own
+    /// descendant `StaticText.value` (this codebase's established
+    /// pattern for hosted-SwiftUI text: exposed via `value`, not plain
+    /// `label` -- same as `SessionBrowserRowView`'s row text, per this
+    /// file's own header comment).
     ///
-    /// Deliberately sidebar, NOT `CalixUITestCase.countTabBarTabs()`'s
-    /// tab bar: field-verified across three separate accessibility
-    /// snapshots (Xcode's own auto-attached failure diagnostics) that
-    /// with the Session Browser panel ALSO open, the tab bar's own row
-    /// `Group` elements expose NEITHER their `calix.tabBar.tab.<UUID>`
-    /// identifier NOR their `calix.tabBar.tab.index.N` value under any
-    /// window-focus arrangement tried (a direct click, a query scoped to
-    /// the specific window element, and raising the window via the
-    /// standard "Window" menu were all tried and all still showed the
-    /// SAME missing attributes in the resulting snapshot) -- only the
-    /// row's own nested close-button `Image` carries an identifier. The
-    /// SIDEBAR's equivalent rows (`calix.sidebar.tab.<UUID>`), by
-    /// contrast, exposed their identifiers cleanly in every one of those
-    /// same snapshots regardless of which window was key. Every existing
-    /// test using `countTabBarTabs()` elsewhere in this codebase only
-    /// ever has ONE window open at a time, so this suite is the first to
-    /// hit the tab bar's own limitation here.
+    /// Reads titles via `StaticText.value` rather than
+    /// `CalixUITestCase.countSidebarTabs()`'s identifier-based count:
+    /// this suite needs each tab's actual title text (to prove which
+    /// tab attached where), not just a count or a per-group UUID.
     private func sidebarTabTitles() -> Set<String> {
         let rows = app.descendants(matching: .any)
             .matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@", "calix.sidebar.tab.", ".closeButton"))
