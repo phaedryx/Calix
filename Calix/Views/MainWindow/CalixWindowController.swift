@@ -620,6 +620,15 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     private func setupTitlebarAccessory() {
         guard let window else { return }
         let hosting = NSHostingView(rootView: currentTitlebarAccessoryView())
+        // NSHostingView's frame defaults to .zero at creation. Since it
+        // (like any NSView) has translatesAutoresizingMaskIntoConstraints
+        // = true by default, NSTitlebarAccessoryViewController's internal
+        // layout locks the accessory to whatever frame the view already
+        // has at insertion time rather than deriving one from its SwiftUI
+        // content -- so without this line the accessory silently renders
+        // at zero width forever (confirmed via NSHostingView.fittingSize
+        // vs .frame while diagnosing why this button never appeared).
+        hosting.frame.size = hosting.fittingSize
         let accessory = NSTitlebarAccessoryViewController()
         accessory.view = hosting
         accessory.layoutAttribute = .right
