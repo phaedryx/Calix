@@ -693,8 +693,7 @@ private struct TabRowItemView: View {
     }
 
     private var titleColor: Color {
-        if isWorking { return .green }
-        if tab.unreadNotifications > 0 { return .yellow }
+        if isWorking || tab.unreadNotifications > 0 { return .yellow }
         return .primary
     }
 
