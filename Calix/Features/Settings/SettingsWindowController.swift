@@ -253,43 +253,25 @@ class SettingsWindowController: NSWindowController {
         return opacityRow
     }
 
-    private func smoothScrollingRow() -> NSView {
-        let smoothScrollSwitch = NSSwitch()
-        smoothScrollSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.smoothScrollingSwitch)
-        smoothScrollSwitch.state = (UserDefaults.standard.object(forKey: "smoothScrollEnabled") as? Bool ?? true) ? .on : .off
-        smoothScrollSwitch.target = self
-        smoothScrollSwitch.action = #selector(smoothScrollDidChange(_:))
-        return controlRow(label: "Smooth Scrolling", control: smoothScrollSwitch)
-    }
-
-    private func lspAutoInstallRow() -> NSView {
-        let autoInstallSwitch = NSSwitch()
-        autoInstallSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.lspAutoInstallSwitch)
-        autoInstallSwitch.state = LSPSettings.autoInstallEnabled ? .on : .off
-        autoInstallSwitch.target = self
-        autoInstallSwitch.action = #selector(lspAutoInstallDidChange(_:))
-        return controlRow(label: "Auto-install language servers", control: autoInstallSwitch)
-    }
-
-    private func lspRequireConfirmationRow() -> NSView {
-        let requireConfirmSwitch = NSSwitch()
-        requireConfirmSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.lspRequireConfirmationSwitch)
-        requireConfirmSwitch.state = LSPSettings.requireInstallConfirmation ? .on : .off
-        requireConfirmSwitch.target = self
-        requireConfirmSwitch.action = #selector(lspRequireConfirmationDidChange(_:))
-        return controlRow(label: "Confirm before each install step", control: requireConfirmSwitch)
-    }
-
-    /// Pure mapping from a Sessions-pane toggle row to the SessionSettings
-    /// value it must seed its initial `.state` from. Extracted as its own
-    /// function (rather than reading SessionSettings directly inline in
-    /// each row builder) because SettingsWindowController.shared's
-    /// one-shot, process-lifetime construction makes the seeding behavior
+    /// Pure mapping from a toggle row to the backing setting it must seed
+    /// its initial `.state` from. Extracted as its own function (rather
+    /// than reading each backing store directly inline in the row
+    /// builder) because SettingsWindowController.shared's one-shot,
+    /// process-lifetime construction makes the seeding behavior
     /// unobservable through the real singleton in a test -- this has none
-    /// of that lifetime, so a test can set SessionSettings directly and
-    /// call it standalone.
+    /// of that lifetime, so a test can set the backing store directly and
+    /// call it standalone. `default: return false` only ever applies to
+    /// SettingsRow cases that are provably not plain toggles (color
+    /// pickers, sliders, buttons, the per-agent IPC checklist, which has
+    /// its own AgentIPCSettings-backed mechanism in ipcAgentRow) -- every
+    /// row actually built by `toggleRow` below has its own explicit case
+    /// here, which is what closes the gap `toggleRow` exists to close in
+    /// the first place (see that function's own doc comment).
     static func sessionToggleInitialState(for row: SettingsRow) -> Bool {
         switch row {
+        case .smoothScrolling: return UserDefaults.standard.object(forKey: "smoothScrollEnabled") as? Bool ?? true
+        case .lspAutoInstall: return LSPSettings.autoInstallEnabled
+        case .lspRequireConfirmation: return LSPSettings.requireInstallConfirmation
         case .persistentSessions: return SessionSettings.persistentSessionsEnabled
         case .historyPersistence: return SessionSettings.historyPersistenceEnabled
         case .agentResume: return SessionSettings.agentResumeEnabled
@@ -301,67 +283,88 @@ class SettingsWindowController: NSWindowController {
         }
     }
 
-    private func persistentSessionsRow() -> NSView {
+    /// Shared builder for every plain boolean-toggle row (excludes the
+    /// per-agent IPC checklist's `ipcAgentRow`, which also gates
+    /// interactivity on install status and needs a per-agent `.tag`, a
+    /// genuinely different shape). Always seeds `.state` from
+    /// `sessionToggleInitialState` and always wires `.target`/`.action`
+    /// -- this is what a Settings-UI incident (see
+    /// SettingsWindowControllerSessionsToggleWiringTests.swift's header)
+    /// found missing when four toggle rows were each hand-built inline
+    /// with `controlRow(label:control:)` instead of going through one
+    /// seam that can't leave a switch half-wired. `row`/`label`/
+    /// `accessibilityID`/`action` are still spelled out at each call site
+    /// (not hoisted into a static table) so `sessionToggleInitialState`
+    /// stays the one place initial-state seeding can drift from the rest
+    /// -- there is no second switch statement for label or wiring to fall
+    /// out of sync with.
+    private func toggleRow(row: SettingsRow, label: String, accessibilityID: String, action: Selector) -> NSView {
         let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.persistentSessionsSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .persistentSessions) ? .on : .off
+        toggleSwitch.setAccessibilityIdentifier(accessibilityID)
+        toggleSwitch.state = Self.sessionToggleInitialState(for: row) ? .on : .off
         toggleSwitch.target = self
-        toggleSwitch.action = #selector(persistentSessionsDidChange(_:))
-        return controlRow(label: "Enable persistent sessions", control: toggleSwitch)
+        toggleSwitch.action = action
+        return controlRow(label: label, control: toggleSwitch)
+    }
+
+    private func smoothScrollingRow() -> NSView {
+        toggleRow(row: .smoothScrolling, label: "Smooth Scrolling",
+                  accessibilityID: AccessibilityID.Settings.smoothScrollingSwitch,
+                  action: #selector(smoothScrollDidChange(_:)))
+    }
+
+    private func lspAutoInstallRow() -> NSView {
+        toggleRow(row: .lspAutoInstall, label: "Auto-install language servers",
+                  accessibilityID: AccessibilityID.Settings.lspAutoInstallSwitch,
+                  action: #selector(lspAutoInstallDidChange(_:)))
+    }
+
+    private func lspRequireConfirmationRow() -> NSView {
+        toggleRow(row: .lspRequireConfirmation, label: "Confirm before each install step",
+                  accessibilityID: AccessibilityID.Settings.lspRequireConfirmationSwitch,
+                  action: #selector(lspRequireConfirmationDidChange(_:)))
+    }
+
+    private func persistentSessionsRow() -> NSView {
+        toggleRow(row: .persistentSessions, label: "Enable persistent sessions",
+                  accessibilityID: AccessibilityID.Settings.persistentSessionsSwitch,
+                  action: #selector(persistentSessionsDidChange(_:)))
     }
 
     private func historyPersistenceRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.historyPersistenceSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .historyPersistence) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(historyPersistenceDidChange(_:))
-        return controlRow(label: "Persist session history to disk", control: toggleSwitch)
+        toggleRow(row: .historyPersistence, label: "Persist session history to disk",
+                  accessibilityID: AccessibilityID.Settings.historyPersistenceSwitch,
+                  action: #selector(historyPersistenceDidChange(_:)))
     }
 
     private func agentResumeRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.agentResumeSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .agentResume) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(agentResumeDidChange(_:))
-        return controlRow(label: "Offer to resume agent CLI conversations", control: toggleSwitch)
+        toggleRow(row: .agentResume, label: "Offer to resume agent CLI conversations",
+                  accessibilityID: AccessibilityID.Settings.agentResumeSwitch,
+                  action: #selector(agentResumeDidChange(_:)))
     }
 
     private func agentResumeAutoExecuteRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.agentResumeAutoExecuteSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .agentResumeAutoExecute) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(agentResumeAutoExecuteDidChange(_:))
-        return controlRow(label: "Auto-execute resume (skip confirmation)", control: toggleSwitch)
+        toggleRow(row: .agentResumeAutoExecute, label: "Auto-execute resume (skip confirmation)",
+                  accessibilityID: AccessibilityID.Settings.agentResumeAutoExecuteSwitch,
+                  action: #selector(agentResumeAutoExecuteDidChange(_:)))
     }
 
     private func cockpitAutoApproveRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.cockpitAutoApproveSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .cockpitAutoApprove) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(cockpitAutoApproveDidChange(_:))
-        return controlRow(label: "Auto-approve agent commands", control: toggleSwitch)
+        toggleRow(row: .cockpitAutoApprove, label: "Auto-approve agent commands",
+                  accessibilityID: AccessibilityID.Settings.cockpitAutoApproveSwitch,
+                  action: #selector(cockpitAutoApproveDidChange(_:)))
     }
 
     private func commandTrackingRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.commandTrackingSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .commandTracking) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(commandTrackingDidChange(_:))
-        return controlRow(label: "Track shell commands", control: toggleSwitch)
+        toggleRow(row: .commandTracking, label: "Track shell commands",
+                  accessibilityID: AccessibilityID.Settings.commandTrackingSwitch,
+                  action: #selector(commandTrackingDidChange(_:)))
     }
 
     private func agentHookApprovalRow() -> NSView {
-        let toggleSwitch = NSSwitch()
-        toggleSwitch.setAccessibilityIdentifier(AccessibilityID.Settings.agentHookApprovalSwitch)
-        toggleSwitch.state = Self.sessionToggleInitialState(for: .agentHookApproval) ? .on : .off
-        toggleSwitch.target = self
-        toggleSwitch.action = #selector(agentHookApprovalDidChange(_:))
-        return controlRow(label: "Show agent tool prompts in the approval banner", control: toggleSwitch)
+        toggleRow(row: .agentHookApproval, label: "Show agent tool prompts in the approval banner",
+                  accessibilityID: AccessibilityID.Settings.agentHookApprovalSwitch,
+                  action: #selector(agentHookApprovalDidChange(_:)))
     }
 
     /// Builds one IPC-agent checklist row. The switch reflects the
