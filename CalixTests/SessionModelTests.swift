@@ -731,14 +731,17 @@ final class SessionModelTests: XCTestCase {
         XCTAssertEqual(decoded, .blue, "Unknown color string should fall back to .blue")
     }
 
+    /// "red" is a legacy raw value: `.red` was removed from TabGroupColor
+    /// (reserved elsewhere in the UI for agent-state signals), so a group
+    /// persisted with it remaps to `.orange` on decode instead of failing.
     func test_tabGroupColor_decodeValidColor_succeeds() throws {
         let json = Data("\"red\"".utf8)
         let decoded = try JSONDecoder().decode(TabGroupColor.self, from: json)
-        XCTAssertEqual(decoded, .red)
+        XCTAssertEqual(decoded, .orange)
     }
 
     func test_tabGroupColor_allCasesCount() {
-        XCTAssertEqual(TabGroupColor.allCases.count, 10)
+        XCTAssertEqual(TabGroupColor.allCases.count, 8)
     }
 
     // ==================== Phase 3: TabGroup color type ====================

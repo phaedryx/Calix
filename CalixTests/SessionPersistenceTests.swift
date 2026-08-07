@@ -270,7 +270,9 @@ final class SessionPersistenceTests: XCTestCase {
 
         XCTAssertEqual(group.id, groupID, "Group ID should match snapshot")
         XCTAssertEqual(group.name, "Work", "Group name should match snapshot")
-        XCTAssertEqual(group.color, .green, "Group color should match snapshot")
+        // "green" is a legacy raw value remapped by TabGroupColor.decode(rawValue:) to .teal
+        // (.green was removed, reserved elsewhere in the UI for agent-state signals).
+        XCTAssertEqual(group.color, .teal, "Group color should match snapshot's legacy-remapped value")
         XCTAssertEqual(group.isCollapsed, true, "Group isCollapsed should match snapshot")
         XCTAssertEqual(group.tabs.count, 1, "Group should have 1 tab")
         XCTAssertEqual(group.tabs[0].id, tabID, "Tab ID should match snapshot")
@@ -315,7 +317,7 @@ final class SessionPersistenceTests: XCTestCase {
     /// TabGroup.snapshot() should include isCollapsed in the resulting TabGroupSnapshot.
     @MainActor
     func test_tabGroup_snapshot_includes_isCollapsed() {
-        let group = TabGroup(name: "Collapsed", color: .red, isCollapsed: true)
+        let group = TabGroup(name: "Collapsed", color: .orange, isCollapsed: true)
         let snap = group.snapshot()
 
         XCTAssertEqual(snap.isCollapsed, true, "Snapshot should capture isCollapsed=true")
