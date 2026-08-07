@@ -26,6 +26,11 @@ enum SettingsRow: String, CaseIterable {
     case cockpitAutoApprove
     case commandTracking
     case agentHookApproval
+    case ipcClaudeCode
+    case ipcCodex
+    case ipcOpenCode
+    case ipcHermes
+    case ipcCursorAgent
     case openSessionBrowserButton
     case openConfigFileFooter
 
@@ -38,7 +43,8 @@ enum SettingsRow: String, CaseIterable {
             return .lsp
         case .persistentSessions, .historyPersistence, .openSessionBrowserButton:
             return .sessions
-        case .agentResume, .agentResumeAutoExecute, .cockpitAutoApprove, .commandTracking, .agentHookApproval:
+        case .agentResume, .agentResumeAutoExecute, .cockpitAutoApprove, .commandTracking, .agentHookApproval,
+             .ipcClaudeCode, .ipcCodex, .ipcOpenCode, .ipcHermes, .ipcCursorAgent:
             return .agents
         }
     }

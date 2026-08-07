@@ -108,6 +108,17 @@
 //  stays independently pinned by AgentHookApprovalSettingsToggleWiringTests,
 //  same division of labor as commandTracking's.
 //
+//  PER-AGENT IPC CHECKLIST: 5 more Agents-pane switches (ipcClaudeCode/
+//  ipcCodex/ipcOpenCode/ipcHermes/ipcCursorAgent) were added after
+//  agentHookApproval, bringing the pane's total to 10. Unlike the rows
+//  above, all 5 share one target/action pair (ipcAgentSwitchDidChange:,
+//  dispatched by NSSwitch.tag) rather than five distinct selectors, so
+//  they are not itemized in the zip-based wiring check below the same
+//  way agentResume/agentResumeAutoExecute/cockpitAutoApprove are --
+//  their initial `.state` and installed/not-installed disabling are
+//  covered by AgentIPCSettingsTests and CursorAgentConfigManagerTests
+//  instead (see docs/superpowers/plans/2026-08-06-per-agent-ipc-checklist-and-cursor-agent.md).
+//
 //  Coverage:
 //  - (A) each Sessions-pane switch (persistentSessions/historyPersistence)
 //    and each Agents-pane switch this file covers (agentResume/
@@ -115,7 +126,7 @@
 //    SettingsWindowController.shared as its `.target` and its own
 //    expected handler selector as `.action`
 //  - (A) exactly 2 switches exist in the Sessions pane's own view
-//    subtree, and exactly 5 in the Agents pane's, both in SettingsRow's
+//    subtree, and exactly 10 in the Agents pane's, both in SettingsRow's
 //    declared top-to-bottom order (openSessionBrowserButton is a button,
 //    not a switch, so excluded)
 //  - (B) sessionToggleInitialState(for:) reads true/false exactly from
@@ -216,29 +227,33 @@ final class SettingsWindowControllerSessionsToggleWiringTests: XCTestCase {
         }
     }
 
-    // The 5 switches that live on the Agents pane. commandTracking and
-    // agentHookApproval (the last 2 of the 5) are intentionally NOT
-    // included in the wiring zip below -- they're already independently
-    // covered by CommandTrackingSettingsToggleWiringTests
-    // .test_commandTrackingSwitch_existsWithTargetAndActionWired and
+    // The 10 switches that live on the Agents pane. commandTracking and
+    // agentHookApproval, plus the 5 IPC checklist switches added after
+    // them (ipcClaudeCode/ipcCodex/ipcOpenCode/ipcHermes/ipcCursorAgent),
+    // are intentionally NOT included in the wiring zip below -- they're
+    // already independently covered by CommandTrackingSettingsToggleWiringTests
+    // .test_commandTrackingSwitch_existsWithTargetAndActionWired,
     // AgentHookApprovalSettingsToggleWiringTests
-    // .test_agentHookApprovalSwitch_existsWithTargetAndActionWired
-    // (both identifier-based lookups, position-independent), same
+    // .test_agentHookApprovalSwitch_existsWithTargetAndActionWired (both
+    // identifier-based lookups, position-independent), and (for the IPC
+    // switches) AgentIPCSettingsTests/CursorAgentConfigManagerTests, same
     // division of labor this file used for the Sessions pane before the
-    // split. Renamed from ...exactlyFour... (Stage E added the 5th).
-    func test_agentsToggleSwitches_exactlyFive_inRowOrder() throws {
+    // split. Renamed from ...exactlyFive... (per-agent IPC checklist
+    // added 5 more).
+    func test_agentsToggleSwitches_exactlyTen_inRowOrder() throws {
         let switches = collectSwitches(in: try agentsPaneView())
 
         XCTAssertEqual(
-            switches.count, 5,
-            "The Agents pane must show exactly 5 switches (agentResume/agentResumeAutoExecute/" +
-            "cockpitAutoApprove/commandTracking/agentHookApproval). Found \(switches.count)."
+            switches.count, 10,
+            "The Agents pane must show exactly 10 switches (agentResume/agentResumeAutoExecute/" +
+            "cockpitAutoApprove/commandTracking/agentHookApproval/ipcClaudeCode/ipcCodex/ipcOpenCode/" +
+            "ipcHermes/ipcCursorAgent). Found \(switches.count)."
         )
     }
 
     func test_agentsToggleSwitches_haveTargetAndActionWired() throws {
         let switches = collectSwitches(in: try agentsPaneView())
-        try XCTSkipIf(switches.count != 5, "covered, and already failing, by the count pin above")
+        try XCTSkipIf(switches.count != 10, "covered, and already failing, by the count pin above")
 
         // SettingsRow's own declared order for the Agents pane, filtered
         // to the switch-backed rows (SettingsPaneTests.expectedRows pins

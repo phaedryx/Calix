@@ -124,11 +124,16 @@ class SettingsWindowController: NSWindowController {
                 title: "Agent Hook Approval",
                 subtitle: "Routes CLI agents' (Claude Code, Codex) tool-permission prompts to the Calix approval banner. Off = agents prompt in their own pane, as before."
             )
+        case .ipcClaudeCode:
+            return SectionHeading(
+                title: "IPC-Enabled Agents",
+                subtitle: "Choose which agent tools get the Calix IPC MCP server when you enable IPC. A grayed-out switch means that tool isn't installed."
+            )
         case .openConfigFileFooter:
             return SectionHeading(title: nil, subtitle: nil)
         case .themeColorWell, .themeColorHex, .lspRequireConfirmation,
              .historyPersistence, .agentResumeAutoExecute,
-             .openSessionBrowserButton:
+             .openSessionBrowserButton, .ipcCodex, .ipcOpenCode, .ipcHermes, .ipcCursorAgent:
             return nil
         }
     }
@@ -188,6 +193,16 @@ class SettingsWindowController: NSWindowController {
             return commandTrackingRow()
         case .agentHookApproval:
             return agentHookApprovalRow()
+        case .ipcClaudeCode:
+            return ipcAgentRow(.claudeCode, accessibilityID: AccessibilityID.Settings.ipcClaudeCodeSwitch)
+        case .ipcCodex:
+            return ipcAgentRow(.codex, accessibilityID: AccessibilityID.Settings.ipcCodexSwitch)
+        case .ipcOpenCode:
+            return ipcAgentRow(.openCode, accessibilityID: AccessibilityID.Settings.ipcOpenCodeSwitch)
+        case .ipcHermes:
+            return ipcAgentRow(.hermes, accessibilityID: AccessibilityID.Settings.ipcHermesSwitch)
+        case .ipcCursorAgent:
+            return ipcAgentRow(.cursorAgent, accessibilityID: AccessibilityID.Settings.ipcCursorAgentSwitch)
         case .openSessionBrowserButton:
             return sessionBrowserButtonRow()
         case .openConfigFileFooter:
@@ -347,6 +362,50 @@ class SettingsWindowController: NSWindowController {
         toggleSwitch.target = self
         toggleSwitch.action = #selector(agentHookApprovalDidChange(_:))
         return controlRow(label: "Show agent tool prompts in the approval banner", control: toggleSwitch)
+    }
+
+    /// Builds one IPC-agent checklist row. The switch reflects the
+    /// AgentIPCSettings *preference*, not live server status -- toggling
+    /// it ON while CalixMCPServer isn't running only persists the
+    /// preference (nothing to write yet); toggling it OFF always removes
+    /// that agent's config immediately via IPCConfigManager.setAgentEnabled,
+    /// regardless of server state, so a disabled agent's config can never
+    /// be left pointing at a stale port. An agent whose config directory
+    /// doesn't exist is shown disabled with "(not installed)" appended,
+    /// since there is nothing meaningful to toggle for a tool that isn't
+    /// on this machine.
+    private func ipcAgentRow(_ agent: IPCAgent, accessibilityID: String) -> NSView {
+        let toggleSwitch = NSSwitch()
+        toggleSwitch.setAccessibilityIdentifier(accessibilityID)
+        toggleSwitch.state = AgentIPCSettings.isEnabled(agent) ? .on : .off
+
+        let isInstalled = ConfigFileUtils.directoryExists(at: agent.configDirectory)
+        toggleSwitch.isEnabled = isInstalled
+
+        toggleSwitch.target = self
+        toggleSwitch.action = #selector(ipcAgentSwitchDidChange(_:))
+        toggleSwitch.tag = IPCAgent.allCases.firstIndex(of: agent) ?? 0
+
+        let label = isInstalled ? agent.displayName : "\(agent.displayName) (not installed)"
+        return controlRow(label: label, control: toggleSwitch)
+    }
+
+    @objc private func ipcAgentSwitchDidChange(_ sender: NSSwitch) {
+        guard IPCAgent.allCases.indices.contains(sender.tag) else { return }
+        let agent = IPCAgent.allCases[sender.tag]
+        let enabled = sender.state == .on
+
+        AgentIPCSettings.setEnabled(enabled, for: agent)
+
+        if let liveStatus = IPCConfigManager.setAgentEnabled(agent, enabled: enabled),
+           case .failed(let error) = liveStatus {
+            let alert = NSAlert()
+            alert.messageText = "IPC Error"
+            alert.informativeText = "\(agent.displayName): \(error.localizedDescription)"
+            alert.alertStyle = .warning
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        }
     }
 
     private func sessionBrowserButtonRow() -> NSView {

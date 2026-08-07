@@ -100,6 +100,11 @@ final class SettingsPaneTests: XCTestCase {
         ("cockpitAutoApprove", .agents),
         ("commandTracking", .agents),
         ("agentHookApproval", .agents),
+        ("ipcClaudeCode", .agents),
+        ("ipcCodex", .agents),
+        ("ipcOpenCode", .agents),
+        ("ipcHermes", .agents),
+        ("ipcCursorAgent", .agents),
         ("openSessionBrowserButton", .sessions),
         ("openConfigFileFooter", .appearance),
     ]

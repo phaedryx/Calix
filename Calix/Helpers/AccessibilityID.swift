@@ -88,6 +88,11 @@ enum AccessibilityID {
         static let lspRequireConfirmationSwitch = "calix.settings.lsp.lspRequireConfirmationSwitch"
         static let cockpitAutoApproveSwitch = "calix.settings.sessions.cockpitAutoApproveSwitch"
         static let agentHookApprovalSwitch = "calix.settings.sessions.agentHookApprovalSwitch"
+        static let ipcClaudeCodeSwitch = "calix.settings.agents.ipcClaudeCodeSwitch"
+        static let ipcCodexSwitch = "calix.settings.agents.ipcCodexSwitch"
+        static let ipcOpenCodeSwitch = "calix.settings.agents.ipcOpenCodeSwitch"
+        static let ipcHermesSwitch = "calix.settings.agents.ipcHermesSwitch"
+        static let ipcCursorAgentSwitch = "calix.settings.agents.ipcCursorAgentSwitch"
     }
     enum SessionBrowser {
         static func row(_ id: String) -> String { "calix.sessionBrowser.row.\(id)" }
