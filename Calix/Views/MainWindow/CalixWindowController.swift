@@ -3806,18 +3806,21 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
             let hooksResult = AgentHooksCoordinator.install()
 
             // Persist any hook-install failure as a standing sidebar
-            // banner (AgentStatusView) rather than only the one-shot
-            // alert below — a symlink/permissions failure here otherwise
-            // degrades the Agents sidebar silently for the rest of the
-            // session. `[]` when every tool installed cleanly, clearing
-            // any banner left over from a prior enable attempt.
+            // banner (AgentStatusView) rather than a dialog -- a
+            // symlink/permissions failure here otherwise degrades the
+            // Agents sidebar silently for the rest of the session. `[]`
+            // when every tool installed cleanly, clearing any banner left
+            // over from a prior enable attempt. Hook issues never factor
+            // into whether the alert below appears -- that's config-write
+            // failures only.
             AgentRegistry.shared.setHooksIssues(Self.hooksIssueMessages(hooksResult))
 
-            showIPCAlert(
-                title: "IPC Enabled",
-                message: "MCP server running on port \(port).\n\(configStatusMessage(result))\n" +
-                    "\(agentHooksStatusMessage(hooksResult, mode: .install))\nRestart agent instances to connect."
-            )
+            // Silent on full success -- a dialog naming nothing wrong adds
+            // no information the user needs. Only surface the agents that
+            // actually failed to configure.
+            if !result.failedAgents.isEmpty {
+                showIPCAlert(title: "IPC Setup Issue", message: failedAgentsMessage(result.failedAgents))
+            }
         } catch {
             showIPCAlert(title: "IPC Error", message: error.localizedDescription)
         }
@@ -3827,60 +3830,26 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         CalixMCPServer.shared.stop()
         let result = IPCConfigManager.disableIPC()
         let hooksResult = AgentHooksCoordinator.remove()
+        AgentRegistry.shared.setHooksIssues(Self.hooksIssueMessages(hooksResult))
 
-        showIPCAlert(
-            title: "IPC Disabled",
-            message: "MCP server stopped.\n\(configStatusMessage(result))\n" +
-                "\(agentHooksStatusMessage(hooksResult, mode: .remove))"
-        )
-    }
-
-    /// Whether an `AgentHooksResult` reflects `AgentHooksCoordinator.install()`
-    /// or `.remove()` — determines the verb `configStatusLabel` reports for
-    /// `.success`, since "configured" reads wrong after a removal.
-    private enum AgentHooksMode {
-        case install
-        case remove
-    }
-
-    /// Formats one tool's `ConfigStatus` as a single status line: `name: verb`
-    /// on success, `name: reason (skipped)` on skip, `name: error - ...` on
-    /// failure. Shared by `configStatusMessage` (always "configured", since
-    /// `IPCConfigManager` has no separate disable-wording need) and
-    /// `agentHooksStatusMessage` (whose verb depends on `AgentHooksMode`).
-    private func configStatusLabel(_ status: ConfigStatus, name: String, verb: String) -> String {
-        switch status {
-        case .success:
-            return "\(name): \(verb)"
-        case .skipped(let reason):
-            return "\(name): \(reason) (skipped)"
-        case .failed(let error):
-            return "\(name): error - \(error.localizedDescription)"
+        if !result.failedAgents.isEmpty {
+            showIPCAlert(title: "IPC Teardown Issue", message: failedAgentsMessage(result.failedAgents))
         }
     }
 
-    private func configStatusMessage(_ result: IPCConfigResult) -> String {
-        [
-            configStatusLabel(result.claudeCode, name: "Claude Code", verb: "configured"),
-            configStatusLabel(result.codex, name: "Codex", verb: "configured"),
-            configStatusLabel(result.openCode, name: "OpenCode", verb: "configured"),
-            configStatusLabel(result.hermes, name: "Hermes", verb: "configured"),
-            configStatusLabel(result.cursorAgent, name: "Cursor Agent", verb: "configured"),
-        ].joined(separator: "\n")
-    }
-
-    private func agentHooksStatusMessage(_ result: AgentHooksResult, mode: AgentHooksMode) -> String {
-        let verb = mode == .install ? "configured" : "removed"
-        return [
-            configStatusLabel(result.claudeCode, name: "Claude Code hooks", verb: verb),
-            configStatusLabel(result.codex, name: "Codex hooks", verb: verb),
-            configStatusLabel(result.openCode, name: "OpenCode plugin", verb: verb),
-        ].joined(separator: "\n")
+    /// One `"<name>: error - <description>"` line per entry in `failures`
+    /// (from `IPCConfigResult.failedAgents`), for the enable/disable
+    /// summary alert. Only ever called with a non-empty array -- both
+    /// call sites already gate on `!result.failedAgents.isEmpty`.
+    private func failedAgentsMessage(_ failures: [(agent: IPCAgent, error: Error)]) -> String {
+        failures
+            .map { "\($0.agent.displayName): error - \($0.error.localizedDescription)" }
+            .joined(separator: "\n")
     }
 
     /// One `"<name>: <localizedDescription>"` line per `.failed` tool in
     /// `result`, for `AgentRegistry.hooksIssues`'s persistent sidebar
-    /// banner. `[]` when every tool installed successfully (or was
+    /// banner. `[]` when every tool installed/removed successfully (or was
     /// skipped) — `AgentStatusView` only renders the banner when this is
     /// non-empty.
     private static func hooksIssueMessages(_ result: AgentHooksResult) -> [String] {
