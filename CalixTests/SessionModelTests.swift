@@ -738,7 +738,7 @@ final class SessionModelTests: XCTestCase {
     }
 
     func test_tabGroupColor_allCasesCount() {
-        XCTAssertEqual(TabGroupColor.allCases.count, 11)
+        XCTAssertEqual(TabGroupColor.allCases.count, 8)
     }
 
     // ==================== Phase 3: TabGroup color type ====================
