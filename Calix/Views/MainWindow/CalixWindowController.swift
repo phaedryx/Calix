@@ -3745,6 +3745,13 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - IPC
 
     private func enableIPC() {
+        guard IPCAgent.allCases.contains(where: { AgentIPCSettings.isEnabled($0) }) else {
+            showIPCAlert(
+                title: "IPC Error",
+                message: "All agents are disabled in Settings \u{2192} Agents. Enable at least one to turn on IPC."
+            )
+            return
+        }
         do {
             // Generate token: 32 random bytes as hex
             var bytes = [UInt8](repeating: 0, count: 32)
