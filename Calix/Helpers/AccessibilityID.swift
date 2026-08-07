@@ -23,6 +23,7 @@ enum AccessibilityID {
     }
     enum Titlebar {
         static let gitChangesButton = "calix.titlebar.gitChangesButton"
+        static let ipcToggleButton = "calix.titlebar.ipcToggleButton"
     }
     enum CommandPalette {
         static let container = "calix.commandPalette"
