@@ -29,6 +29,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     var _gitChangesControllerForTesting: GitChangesController { gitChangesController }
     #endif
     private var hostingView: NSHostingView<MainContentView>?
+    private var gitChangesAccessoryHostingView: NSHostingView<GitChangesTitlebarButtonView>?
     private var wasOccluded = false
     /// Not `private` (P4): `SessionCommandPaletteTests` reads
     /// `allCommands` directly (via `@testable import Calix`) to assert
@@ -378,6 +379,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         window.center()
         setupCommandRegistry()
         setupUI()
+        setupGitChangesTitlebarAccessory()
         if !restoring { setupTerminalSurface(host: initialHost) }
         registerNotificationObservers()
         startScreenPollTask()
@@ -613,6 +615,28 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         self.hostingView = hosting
 
         // Title bar glass is now handled by SwiftUI overlay in MainContentView
+    }
+
+    private func setupGitChangesTitlebarAccessory() {
+        guard let window else { return }
+        let hosting = NSHostingView(rootView: currentGitChangesButtonView())
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.view = hosting
+        accessory.layoutAttribute = .right
+        window.addTitlebarAccessoryViewController(accessory)
+        self.gitChangesAccessoryHostingView = hosting
+    }
+
+    private func currentGitChangesButtonView() -> GitChangesTitlebarButtonView {
+        let isVisible: Bool = {
+            if case .terminal = windowSession.activeGroup?.activeTab?.content { return true }
+            return false
+        }()
+        return GitChangesTitlebarButtonView(
+            isOpen: gitChangesController.isChangesPanelVisible,
+            isVisible: isVisible,
+            onToggle: { [weak self] in self?.toggleGitChangesPanel() }
+        )
     }
 
     /// `host` (P5, remote sessions): threaded straight into
@@ -1047,6 +1071,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
 
     private func refreshHostingView() {
         hostingView?.rootView = buildMainContentView()
+        gitChangesAccessoryHostingView?.rootView = currentGitChangesButtonView()
     }
 
     /// Called by `AppDelegate.broadcastHasPreservedSessionSnapshotToRecoveryBars()`
