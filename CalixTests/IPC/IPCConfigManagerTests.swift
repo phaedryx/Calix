@@ -262,4 +262,45 @@ final class IPCConfigManagerTests: XCTestCase {
                        "Precondition: this test assumes no other test left the shared MCP server running")
         XCTAssertNil(IPCConfigManager.setAgentEnabled(.claudeCode, enabled: true))
     }
+
+    // MARK: - IPCConfigResult.failedAgents
+
+    func test_failedAgents_emptyWhenAllSuccessOrSkipped() {
+        let result = IPCConfigResult(
+            claudeCode: .success,
+            codex: .skipped(reason: "not installed"),
+            openCode: .success,
+            hermes: .skipped(reason: "disabled in settings"),
+            cursorAgent: .skipped(reason: "not installed")
+        )
+        XCTAssertTrue(result.failedAgents.isEmpty)
+    }
+
+    func test_failedAgents_returnsOnlyFailedEntries() {
+        let claudeError = NSError(domain: "test", code: 1)
+        let hermesError = NSError(domain: "test", code: 2)
+        let result = IPCConfigResult(
+            claudeCode: .failed(claudeError),
+            codex: .success,
+            openCode: .skipped(reason: "not installed"),
+            hermes: .failed(hermesError),
+            cursorAgent: .success
+        )
+        let failures = result.failedAgents
+        XCTAssertEqual(failures.map(\.agent), [.claudeCode, .hermes])
+        XCTAssertEqual((failures[0].error as NSError).code, 1)
+        XCTAssertEqual((failures[1].error as NSError).code, 2)
+    }
+
+    func test_failedAgents_allFailed() {
+        let error = NSError(domain: "test", code: 3)
+        let result = IPCConfigResult(
+            claudeCode: .failed(error),
+            codex: .failed(error),
+            openCode: .failed(error),
+            hermes: .failed(error),
+            cursorAgent: .failed(error)
+        )
+        XCTAssertEqual(result.failedAgents.map(\.agent), IPCAgent.allCases)
+    }
 }

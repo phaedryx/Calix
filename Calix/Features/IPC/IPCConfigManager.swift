@@ -67,6 +67,22 @@ struct IPCConfigResult: Sendable {
         if case .success = cursorAgent { return true }
         return false
     }
+
+    /// The subset of agents whose `ConfigStatus` is `.failed`, paired with
+    /// the underlying error. Used by `CalixWindowController` to decide
+    /// whether the enable/disable summary alert should appear at all, and
+    /// if so, to name exactly which agents need attention -- `.skipped`
+    /// agents (not installed, or disabled in settings) are intentional
+    /// outcomes, not failures, so they're excluded here.
+    var failedAgents: [(agent: IPCAgent, error: Error)] {
+        [
+            (IPCAgent.claudeCode, claudeCode), (.codex, codex), (.openCode, openCode),
+            (.hermes, hermes), (.cursorAgent, cursorAgent),
+        ].compactMap { agent, status in
+            guard case .failed(let error) = status else { return nil }
+            return (agent, error)
+        }
+    }
 }
 
 // MARK: - IPCConfigManager
