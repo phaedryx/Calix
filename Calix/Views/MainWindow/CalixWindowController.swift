@@ -397,50 +397,50 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
     // MARK: - Setup
 
     private func setupCommandRegistry() {
-        commandRegistry.register(PaletteCommand(id: "tab.new", title: "New Tab", shortcut: "Cmd+T", category: "Tabs") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "tab.new", title: "New Tab", shortcut: .newTab, category: "Tabs") { [weak self] in
             self?.createNewTab()
         })
-        commandRegistry.register(PaletteCommand(id: "tab.close", title: "Close Tab", shortcut: "Cmd+W", category: "Tabs") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "tab.close", title: "Close Tab", shortcut: .closeTab, category: "Tabs") { [weak self] in
             guard let self, let tab = self.activeTab else { return }
             self.closeTab(id: tab.id)
         })
-        commandRegistry.register(PaletteCommand(id: "tab.next", title: "Next Tab", shortcut: "Cmd+Shift+]", category: "Tabs") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "tab.next", title: "Next Tab", shortcut: .nextTab, category: "Tabs") { [weak self] in
             self?.selectNextTab(nil)
         })
-        commandRegistry.register(PaletteCommand(id: "tab.previous", title: "Previous Tab", shortcut: "Cmd+Shift+[", category: "Tabs") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "tab.previous", title: "Previous Tab", shortcut: .previousTab, category: "Tabs") { [weak self] in
             self?.selectPreviousTab(nil)
         })
-        commandRegistry.register(PaletteCommand(id: "group.new", title: "New Group", shortcut: "Ctrl+Shift+N", category: "Groups") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "group.new", title: "New Group", shortcut: .newGroup, category: "Groups") { [weak self] in
             self?.createNewGroup()
         })
-        commandRegistry.register(PaletteCommand(id: "group.close", title: "Close Group", shortcut: "Ctrl+Shift+W", category: "Groups") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "group.close", title: "Close Group", shortcut: .closeGroup, category: "Groups") { [weak self] in
             self?.closeActiveGroup()
         })
-        commandRegistry.register(PaletteCommand(id: "group.next", title: "Next Group", shortcut: "Ctrl+Shift+]", category: "Groups") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "group.next", title: "Next Group", shortcut: .nextGroup, category: "Groups") { [weak self] in
             self?.switchToNextGroup()
         })
-        commandRegistry.register(PaletteCommand(id: "group.previous", title: "Previous Group", shortcut: "Ctrl+Shift+[", category: "Groups") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "group.previous", title: "Previous Group", shortcut: .previousGroup, category: "Groups") { [weak self] in
             self?.switchToPreviousGroup()
         })
-        commandRegistry.register(PaletteCommand(id: "view.sidebar", title: "Toggle Sidebar", shortcut: "Cmd+Opt+S", category: "View") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "view.sidebar", title: "Toggle Sidebar", shortcut: .toggleSidebar, category: "View") { [weak self] in
             self?.toggleSidebar()
         })
-        commandRegistry.register(PaletteCommand(id: "view.fullscreen", title: "Toggle Full Screen", shortcut: "Ctrl+Cmd+F", category: "View") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "view.fullscreen", title: "Toggle Full Screen", shortcut: .toggleFullScreen, category: "View") { [weak self] in
             self?.window?.toggleFullScreen(nil)
         })
-        commandRegistry.register(PaletteCommand(id: "window.new", title: "New Window", shortcut: "Cmd+N", category: "Window") {
+        commandRegistry.register(PaletteCommand(id: "window.new", title: "New Window", shortcut: .newWindow, category: "Window") {
             if let appDelegate = NSApp.delegate as? AppDelegate {
                 appDelegate.createNewWindow()
             }
         })
-        commandRegistry.register(PaletteCommand(id: "edit.find", title: "Find in Terminal", shortcut: "Cmd+F", category: "Edit") { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "edit.find", title: "Find in Terminal", shortcut: .findInTerminal, category: "Edit") { [weak self] in
             guard let controller = self?.focusedController else { return }
             controller.performAction("start_search")
         })
         commandRegistry.register(PaletteCommand(
             id: "edit.compose",
             title: "Compose Input",
-            shortcut: "Cmd+Shift+E",
+            shortcut: .composeInput,
             category: "Edit"
         ) { [weak self] in
             self?.toggleComposeOverlay()
@@ -514,7 +514,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
                 }
             }
         })
-        commandRegistry.register(PaletteCommand(id: "tab.jumpToUnread", title: "Jump to Unread Tab", shortcut: "Cmd+Shift+U", category: "Tabs", isAvailable: { [weak self] in
+        commandRegistry.register(PaletteCommand(id: "tab.jumpToUnread", title: "Jump to Unread Tab", shortcut: .jumpToUnreadTab, category: "Tabs", isAvailable: { [weak self] in
             guard let self else { return false }
             return self.windowSession.groups.flatMap(\.tabs).contains { $0.unreadNotifications > 0 }
         }) { [weak self] in
@@ -531,6 +531,7 @@ class CalixWindowController: NSWindowController, NSWindowDelegate {
         commandRegistry.register(PaletteCommand(
             id: "session.attach",
             title: "Session Browser…",
+            shortcut: .sessionBrowser,
             category: "Sessions"
         ) {
             SessionBrowserWindowController.shared.showBrowser()

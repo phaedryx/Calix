@@ -47,14 +47,8 @@ final class SessionRestoreCoordinator {
 
     func saveImmediately() {
         let snapshot = buildSnapshot()
-        var done = false
-        Task {
+        _ = runDetachedSyncBridge(deadline: 1.0, cancelOnTimeout: false, default: ()) {
             await SessionPersistenceActor.shared.saveImmediately(snapshot)
-            done = true
-        }
-        let deadline = Date().addingTimeInterval(1.0)
-        while !done, Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
         }
     }
 
@@ -79,12 +73,11 @@ final class SessionRestoreCoordinator {
     /// which itself refuses to let an empty snapshot clobber a non-empty
     /// on-disk one, and resets the crash-loop counter exactly as
     /// applicationWillTerminate's own Task body already did.
-    /// See SyncBridgeBox's own doc comment for why this uses
-    /// `Task.detached` instead of the plain `Task { }` every other
-    /// busy-wait in this file uses: this method must also behave
-    /// correctly when driven directly from an async XCTest method
-    /// (AppDelegatePendingTerminationSnapshotTests), not only from
-    /// applicationWillTerminate's genuinely synchronous call stack.
+    /// See `runDetachedSyncBridge`'s own doc comment for why this uses
+    /// `Task.detached` instead of a plain `Task { }`: this method must
+    /// also behave correctly when driven directly from an async XCTest
+    /// method (AppDelegatePendingTerminationSnapshotTests), not only
+    /// from applicationWillTerminate's genuinely synchronous call stack.
     ///
     /// Closure-indirection artifact: `pendingTerminationSnapshot` stays
     /// on AppDelegate, so it is taken here as an explicit parameter
@@ -96,15 +89,9 @@ final class SessionRestoreCoordinator {
         #else
         let actor = SessionPersistenceActor.shared
         #endif
-        let box = SyncBridgeBox<Bool>(false)
-        Task.detached {
+        _ = runDetachedSyncBridge(deadline: 1.0, cancelOnTimeout: false, default: ()) {
             await actor.saveAtTermination(snapshot)
             await actor.resetRecoveryCounter()
-            box.value = true
-        }
-        let deadline = Date().addingTimeInterval(1.0)
-        while !box.value, Date() < deadline {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
         }
     }
 
@@ -330,32 +317,11 @@ final class SessionRestoreCoordinator {
 
     /// Single-slot, lock-protected box used ONLY to bridge a
     /// `Task.detached` result back into a synchronous busy-wait loop.
-    ///
-    /// WHY THIS EXISTS (confirmed empirically, not theoretical): a plain
-    /// (non-detached) `Task { ... }` created inside a `@MainActor`
-    /// method inherits MainActor isolation, so it is queued onto
-    /// MainActor's SAME serial turn the enclosing synchronous method is
-    /// still occupying. When that method is invoked from a genuinely
-    /// synchronous, non-Task call stack (e.g. `applicationDidFinishLaunching`,
-    /// every production call site here), no other MainActor turn is in
-    /// the way, so the queued task runs as soon as the run loop is
-    /// pumped -- this is why the busy-wait convention used throughout
-    /// this file already works for production. But when the SAME method
-    /// is invoked from a caller that is ITSELF already an async Task
-    /// running on MainActor (an `async` XCTest method, exactly what
-    /// AppDelegateSessionRestoreDiskTimeoutTests/
-    /// AppDelegatePendingTerminationSnapshotTests need for their own
-    /// setup), the child task cannot start until the CURRENT MainActor
-    /// turn (this very function) returns -- confirmed by raising the
-    /// busy-wait deadline to 10s in a throwaway experiment and observing
-    /// it still never completes; only `Task.detached`, which runs
-    /// independently of MainActor's turn, avoids this. `Task.detached`'s
-    /// closure must be `@Sendable`, so its result cannot cross back via
-    /// a captured `var` the way the inherited-isolation `Task { }`
-    /// pattern does elsewhere in this file; `@unchecked Sendable` here is
-    /// justified because EVERY read and write of `value` is serialized
-    /// through `lock`, so there is no actual unsynchronized shared
-    /// mutable state despite crossing an isolation domain.
+    /// `@unchecked Sendable` is justified because EVERY read and write of
+    /// `value` is serialized through `lock`, so there is no actual
+    /// unsynchronized shared mutable state despite crossing an isolation
+    /// domain. See `runDetachedSyncBridge` below for why `Task.detached`
+    /// (not a plain `Task { }`) is required to use this safely.
     private final class SyncBridgeBox<Value>: @unchecked Sendable {
         private let lock = NSLock()
         private var storedValue: Value
@@ -363,6 +329,74 @@ final class SessionRestoreCoordinator {
         var value: Value {
             get { lock.lock(); defer { lock.unlock() }; return storedValue }
             set { lock.lock(); defer { lock.unlock() }; storedValue = newValue }
+        }
+    }
+
+    /// The one async-to-sync bridge for every caller here that only
+    /// needs `SessionPersistenceActor` (a plain, non-`@MainActor`
+    /// actor): `saveImmediately()`, `saveForTermination(pendingSnapshot:)`,
+    /// `attemptSessionRestoreFromDisk(deadline:)`, and
+    /// `attemptPreserveDiscardedSessionOnDisk(deadline:)` used to each
+    /// reimplement this same busy-wait, one of them (this method's own
+    /// prior history) using the deadlock-prone plain-`Task { }` form.
+    ///
+    /// WHY `Task.detached` (confirmed empirically, not theoretical): a
+    /// plain (non-detached) `Task { ... }` created inside a `@MainActor`
+    /// method inherits MainActor isolation, so it is queued onto
+    /// MainActor's SAME serial turn the enclosing synchronous method is
+    /// still occupying. When that method is invoked from a genuinely
+    /// synchronous, non-Task call stack (e.g. `applicationDidFinishLaunching`,
+    /// every production call site here), no other MainActor turn is in
+    /// the way, so the queued task runs as soon as the run loop is
+    /// pumped. But when the SAME method is invoked from a caller that is
+    /// ITSELF already an async Task running on MainActor (an `async`
+    /// XCTest method, exactly what
+    /// AppDelegateSessionRestoreDiskTimeoutTests/
+    /// AppDelegatePendingTerminationSnapshotTests need for their own
+    /// setup), the child task cannot start until the CURRENT MainActor
+    /// turn (this very function) returns -- confirmed by raising the
+    /// busy-wait deadline to 10s in a throwaway experiment and observing
+    /// it still never completes. `Task.detached` runs independently of
+    /// MainActor's turn, so it starts either way -- safe here ONLY
+    /// because `operation` never needs to hop back onto MainActor itself
+    /// (it talks to `SessionPersistenceActor` alone). See
+    /// `hasRunningPersistentSessionsBridged`'s own doc comment for the
+    /// one caller in this file where that precondition does NOT hold,
+    /// and why it deliberately does not use this bridge.
+    ///
+    /// `cancelOnTimeout` lets `.timedOut` callers (`attemptSessionRestoreFromDisk`,
+    /// `attemptPreserveDiscardedSessionOnDisk`) stop a now-useless
+    /// in-flight operation, while fire-and-forget callers
+    /// (`saveImmediately`, `saveForTermination`) pass `false` so a save
+    /// that's merely slow still lands on disk instead of being killed
+    /// mid-write.
+    private func runDetachedSyncBridge<Value: Sendable>(
+        deadline: TimeInterval,
+        cancelOnTimeout: Bool,
+        default defaultValue: Value,
+        operation: @escaping @Sendable () async -> Value
+    ) -> (value: Value, completed: Bool) {
+        let box = SyncBridgeBox<(value: Value, done: Bool)>((defaultValue, false))
+        let task = Task.detached {
+            let result = await operation()
+            box.value = (result, true)
+        }
+        pumpRunLoop(until: { box.value.done }, deadline: deadline)
+        guard box.value.done else {
+            if cancelOnTimeout { task.cancel() }
+            return (defaultValue, false)
+        }
+        return (box.value.value, true)
+    }
+
+    /// Busy-waits by repeatedly running the current run loop in short
+    /// slices until `isDone()` reports true or `deadline` elapses --
+    /// the loop body shared by `runDetachedSyncBridge` and
+    /// `hasRunningPersistentSessionsBridged`.
+    private func pumpRunLoop(until isDone: () -> Bool, deadline: TimeInterval) {
+        let deadlineDate = Date().addingTimeInterval(deadline)
+        while !isDone(), Date() < deadlineDate {
+            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
         }
     }
 
@@ -378,32 +412,19 @@ final class SessionRestoreCoordinator {
     /// AppDelegateSessionRestoreDiskTimeoutTests's own header for the
     /// full root-cause narrative). `deadline: 0` deterministically
     /// forces `.timedOut` without needing an artificially slow actor.
-    /// See SyncBridgeBox's own doc comment for why the disk read runs
-    /// in a `Task.detached` instead of a plain `Task { }`.
     func attemptSessionRestoreFromDisk(deadline: TimeInterval = 2.0) -> SessionRestoreDiskOutcome {
         #if DEBUG
         let actor = sessionPersistenceActorForTesting ?? SessionPersistenceActor.shared
         #else
         let actor = SessionPersistenceActor.shared
         #endif
-        let box = SyncBridgeBox<(snapshot: SessionSnapshot?, done: Bool)>((nil, false))
-        let task = Task.detached {
+        let (snapshot, completed) = runDetachedSyncBridge(deadline: deadline, cancelOnTimeout: true, default: nil) { () -> SessionSnapshot? in
             let recoveryCount = await actor.incrementRecoveryCounter()
-            var snapshot: SessionSnapshot?
-            if recoveryCount <= SessionPersistenceActor.maxRecoveryAttempts {
-                snapshot = await actor.restore()
-            }
-            box.value = (snapshot, true)
+            guard recoveryCount <= SessionPersistenceActor.maxRecoveryAttempts else { return nil }
+            return await actor.restore()
         }
-        let deadlineDate = Date().addingTimeInterval(deadline)
-        while !box.value.done, Date() < deadlineDate {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
-        }
-        guard box.value.done else {
-            task.cancel()
-            return .timedOut
-        }
-        guard let snapshot = box.value.snapshot else { return .empty }
+        guard completed else { return .timedOut }
+        guard let snapshot else { return .empty }
         return .snapshot(snapshot)
     }
 
@@ -415,47 +436,43 @@ final class SessionRestoreCoordinator {
 
     /// Extracted from preserveDiscardedSessionIfAny()'s body for the
     /// identical reason as attemptSessionRestoreFromDisk(deadline:)
-    /// above; see SyncBridgeBox's own doc comment for why this also
-    /// needs `Task.detached`.
+    /// above.
     func attemptPreserveDiscardedSessionOnDisk(deadline: TimeInterval = 2.0) -> SessionPreserveDiskOutcome {
         #if DEBUG
         let actor = sessionPersistenceActorForTesting ?? SessionPersistenceActor.shared
         #else
         let actor = SessionPersistenceActor.shared
         #endif
-        let box = SyncBridgeBox<(didPreserve: Bool, done: Bool)>((false, false))
-        let task = Task.detached {
-            let didPreserve = await actor.preserveSnapshotForRecovery()
-            box.value = (didPreserve, true)
+        let (didPreserve, completed) = runDetachedSyncBridge(deadline: deadline, cancelOnTimeout: true, default: false) {
+            await actor.preserveSnapshotForRecovery()
         }
-        let deadlineDate = Date().addingTimeInterval(deadline)
-        while !box.value.done, Date() < deadlineDate {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
-        }
-        guard box.value.done else {
-            task.cancel()
+        guard completed else {
             return .timedOut
         }
-        return box.value.didPreserve ? .preserved : .notPreserved
+        return didPreserve ? .preserved : .notPreserved
     }
 
     /// Synchronously bridges the async hasRunningPersistentSessions()
-    /// into restoreSession()'s own synchronous body. Unlike
-    /// attemptSessionRestoreFromDisk(deadline:)/
-    /// attemptPreserveDiscardedSessionOnDisk(deadline:) above, this uses
-    /// a plain (non-detached) `Task { }`, not SyncBridgeBox/Task.detached:
-    /// hasRunningPersistentSessions() is itself MainActor-isolated (this
-    /// class's default), so a detached task calling back into it would
-    /// need to re-acquire MainActor's turn -- exactly the deadlock
-    /// SyncBridgeBox's own doc comment describes -- reintroducing the
-    /// same bug this bridge exists to avoid. This is safe as the plain,
-    /// inherited-isolation form ONLY because restoreSession() (this
-    /// method's sole caller) is itself reached exclusively from
-    /// applicationDidFinishLaunching, a genuinely synchronous call stack
-    /// with no enclosing MainActor Task already occupying a turn -- if
-    /// this is ever driven from an async test caller the way
-    /// attemptSessionRestoreFromDisk's sibling tests are, it needs the
-    /// same SyncBridgeBox treatment first. The generous default deadline
+    /// into restoreSession()'s own synchronous body. Deliberately does
+    /// NOT use `runDetachedSyncBridge` above: that bridge is only safe
+    /// because its operations talk to `SessionPersistenceActor` (a plain
+    /// actor) and never need MainActor's turn back. `hasRunningPersistentSessions`
+    /// is a method on this (`@MainActor`) AppDelegate, so ANY shape that
+    /// awaits it -- a plain `Task { }` OR `Task.detached` calling back
+    /// into it -- ends up enqueuing a job on MainActor's serial executor
+    /// and blocking on it. If this method's caller is a genuinely
+    /// synchronous stack (applicationDidFinishLaunching, restoreSession()'s
+    /// only production call path today) MainActor's executor is free and
+    /// the busy-wait below drains it fine either way; if the caller were
+    /// itself an already-running MainActor async Task (an `async` XCTest
+    /// method, as for attemptSessionRestoreFromDisk's sibling tests),
+    /// BOTH shapes hang identically -- confirmed by raising the busy-wait
+    /// deadline to 10s in a throwaway experiment with `Task.detached`
+    /// and observing it still never completes. Switching Task flavors
+    /// does not fix that; only making `hasRunningPersistentSessions`
+    /// itself non-MainActor-isolated would, and that's out of scope
+    /// here. Safe today only because restoreSession() is never driven
+    /// from an async test caller. The generous default deadline
     /// comfortably exceeds SessionDaemonClient.daemonQueryBoundTimeoutSeconds's
     /// own default bound, so a merely-slow (not unreachable) daemon
     /// still gets a real chance to answer; if it doesn't, this
@@ -469,10 +486,7 @@ final class SessionRestoreCoordinator {
             result = await hasRunningPersistentSessions()
             done = true
         }
-        let deadlineDate = Date().addingTimeInterval(deadline)
-        while !done, Date() < deadlineDate {
-            RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.01))
-        }
+        pumpRunLoop(until: { done }, deadline: deadline)
         return result
     }
 

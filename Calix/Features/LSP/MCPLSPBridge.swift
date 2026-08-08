@@ -100,6 +100,26 @@ protocol MCPLSPTool: Sendable {
     static func handle(arguments: [String: AnyCodable], bridge: MCPLSPBridge) async throws -> MCPContent
 }
 
+// MARK: - MCPLSPToolRegistration
+
+/// Type-erased `(name, description, inputSchema, handle)` for one
+/// `MCPLSPTool` conformer. `MCPLSPBridge.toolRegistrations` holds exactly
+/// one of these per tool -- the seam both the published catalogue and
+/// the call dispatcher read from, so the two can't drift apart.
+struct MCPLSPToolRegistration: Sendable {
+    let name: String
+    let description: String
+    let inputSchema: [String: AnyCodable]
+    let handle: @MainActor @Sendable (_ arguments: [String: AnyCodable], _ bridge: MCPLSPBridge) async throws -> MCPContent
+
+    init<T: MCPLSPTool>(_ tool: T.Type) {
+        name = T.name
+        description = T.description
+        inputSchema = T.inputSchema
+        handle = { arguments, bridge in try await T.handle(arguments: arguments, bridge: bridge) }
+    }
+}
+
 // MARK: - MCPLSPBridgeError
 
 /// Failures raised by `MCPLSPBridge` before any LSP request is dispatched.
@@ -176,512 +196,105 @@ final class MCPLSPBridge {
 
     // MARK: - Tool catalogue
 
-    /// The full set of MCP tools published by this bridge. The list is
-    /// `nonisolated static` so callers (`MCPRouter`, tests) can enumerate
-    /// it without hopping onto the main actor.
+    /// One entry per `MCPLSPTool` conformer this bridge exposes -- the
+    /// single seam both the published catalogue (`tools`) and the call
+    /// dispatcher (`handleToolCall`) read from, so a tool can no longer
+    /// be listed without being dispatchable (or vice versa). Previously
+    /// each tool needed a hand-written entry in a separate array AND a
+    /// separate switch case in `handleToolCall`; nothing enforced the
+    /// two stayed in sync, so a missed entry compiled fine and silently
+    /// dropped or 404'd a tool. `nonisolated static` so callers
+    /// (`MCPRouter`, tests) can enumerate it without hopping onto the
+    /// main actor.
+    nonisolated static let toolRegistrations: [MCPLSPToolRegistration] = [
+        MCPLSPToolRegistration(HoverTool.self),
+        MCPLSPToolRegistration(DefinitionTool.self),
+        MCPLSPToolRegistration(DeclarationTool.self),
+        MCPLSPToolRegistration(TypeDefinitionTool.self),
+        MCPLSPToolRegistration(ImplementationTool.self),
+        MCPLSPToolRegistration(ReferencesTool.self),
+        MCPLSPToolRegistration(DocumentHighlightTool.self),
+        MCPLSPToolRegistration(DocumentSymbolTool.self),
+        MCPLSPToolRegistration(WorkspaceSymbolTool.self),
+        MCPLSPToolRegistration(CompletionTool.self),
+        MCPLSPToolRegistration(SignatureHelpTool.self),
+        MCPLSPToolRegistration(PrepareRenameTool.self),
+        MCPLSPToolRegistration(RenameTool.self),
+        MCPLSPToolRegistration(CodeActionTool.self),
+        MCPLSPToolRegistration(DiagnosticsTool.self),
+        MCPLSPToolRegistration(CheckInstallationTool.self),
+        MCPLSPToolRegistration(InstallTool.self),
+        MCPLSPToolRegistration(InstallStatusTool.self),
+        MCPLSPToolRegistration(SessionStatusTool.self),
+        MCPLSPToolRegistration(SessionWarmupTool.self),
+        MCPLSPToolRegistration(SessionShutdownTool.self),
+        MCPLSPToolRegistration(CallHierarchyPrepareTool.self),
+        MCPLSPToolRegistration(CallHierarchyIncomingTool.self),
+        MCPLSPToolRegistration(CallHierarchyOutgoingTool.self),
+        MCPLSPToolRegistration(TypeHierarchyPrepareTool.self),
+        MCPLSPToolRegistration(TypeHierarchySupertypesTool.self),
+        MCPLSPToolRegistration(TypeHierarchySubtypesTool.self),
+        MCPLSPToolRegistration(MonikerTool.self),
+        MCPLSPToolRegistration(CodeLensTool.self),
+        MCPLSPToolRegistration(CodeLensResolveTool.self),
+        MCPLSPToolRegistration(InlayHintTool.self),
+        MCPLSPToolRegistration(InlayHintResolveTool.self),
+        MCPLSPToolRegistration(InlineValueTool.self),
+        MCPLSPToolRegistration(FoldingRangeTool.self),
+        MCPLSPToolRegistration(SelectionRangeTool.self),
+        MCPLSPToolRegistration(SemanticTokensFullTool.self),
+        MCPLSPToolRegistration(SemanticTokensRangeTool.self),
+        MCPLSPToolRegistration(SemanticTokensDeltaTool.self),
+        MCPLSPToolRegistration(LinkedEditingRangeTool.self),
+        MCPLSPToolRegistration(DocumentLinkTool.self),
+        MCPLSPToolRegistration(DocumentLinkResolveTool.self),
+        MCPLSPToolRegistration(DocumentColorTool.self),
+        MCPLSPToolRegistration(ColorPresentationTool.self),
+        MCPLSPToolRegistration(CompletionResolveTool.self),
+        MCPLSPToolRegistration(CodeActionResolveTool.self),
+        MCPLSPToolRegistration(FormattingTool.self),
+        MCPLSPToolRegistration(RangeFormattingTool.self),
+        MCPLSPToolRegistration(OnTypeFormattingTool.self),
+        MCPLSPToolRegistration(WorkspaceSymbolResolveTool.self),
+        MCPLSPToolRegistration(WorkspaceDiagnosticPullTool.self),
+        MCPLSPToolRegistration(WorkspaceExecuteCommandTool.self),
+        MCPLSPToolRegistration(WorkspaceApplyEditTool.self),
+        MCPLSPToolRegistration(WorkspaceConfigurationGetTool.self),
+        MCPLSPToolRegistration(WorkspaceConfigurationSetTool.self),
+        MCPLSPToolRegistration(WillCreateFilesTool.self),
+        MCPLSPToolRegistration(DidCreateFilesTool.self),
+        MCPLSPToolRegistration(WillRenameFilesTool.self),
+        MCPLSPToolRegistration(DidRenameFilesTool.self),
+        MCPLSPToolRegistration(WillDeleteFilesTool.self),
+        MCPLSPToolRegistration(DidDeleteFilesTool.self),
+        MCPLSPToolRegistration(BatchTool.self),
+        MCPLSPToolRegistration(HoverBundleTool.self),
+        MCPLSPToolRegistration(SymbolWalkTool.self),
+        MCPLSPToolRegistration(GlobalWorkspaceSymbolTool.self),
+        MCPLSPToolRegistration(CrossWorkspaceDefinitionTool.self),
+        MCPLSPToolRegistration(DiagnosticsDiffTool.self),
+        MCPLSPToolRegistration(CapabilitiesTool.self),
+        MCPLSPToolRegistration(NotebookDidOpenTool.self),
+        MCPLSPToolRegistration(NotebookDidChangeTool.self),
+        MCPLSPToolRegistration(NotebookDidCloseTool.self),
+    ]
+
+    /// The full set of MCP tools published by this bridge, derived from
+    /// `toolRegistrations`.
     nonisolated static var tools: [MCPTool] {
-        [
-            MCPTool(
-                name: HoverTool.name,
-                description: HoverTool.description,
-                inputSchema: HoverTool.inputSchema
-            ),
-            MCPTool(
-                name: DefinitionTool.name,
-                description: DefinitionTool.description,
-                inputSchema: DefinitionTool.inputSchema
-            ),
-            MCPTool(
-                name: DeclarationTool.name,
-                description: DeclarationTool.description,
-                inputSchema: DeclarationTool.inputSchema
-            ),
-            MCPTool(
-                name: TypeDefinitionTool.name,
-                description: TypeDefinitionTool.description,
-                inputSchema: TypeDefinitionTool.inputSchema
-            ),
-            MCPTool(
-                name: ImplementationTool.name,
-                description: ImplementationTool.description,
-                inputSchema: ImplementationTool.inputSchema
-            ),
-            MCPTool(
-                name: ReferencesTool.name,
-                description: ReferencesTool.description,
-                inputSchema: ReferencesTool.inputSchema
-            ),
-            MCPTool(
-                name: DocumentHighlightTool.name,
-                description: DocumentHighlightTool.description,
-                inputSchema: DocumentHighlightTool.inputSchema
-            ),
-            MCPTool(
-                name: DocumentSymbolTool.name,
-                description: DocumentSymbolTool.description,
-                inputSchema: DocumentSymbolTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceSymbolTool.name,
-                description: WorkspaceSymbolTool.description,
-                inputSchema: WorkspaceSymbolTool.inputSchema
-            ),
-            MCPTool(
-                name: CompletionTool.name,
-                description: CompletionTool.description,
-                inputSchema: CompletionTool.inputSchema
-            ),
-            MCPTool(
-                name: SignatureHelpTool.name,
-                description: SignatureHelpTool.description,
-                inputSchema: SignatureHelpTool.inputSchema
-            ),
-            MCPTool(
-                name: PrepareRenameTool.name,
-                description: PrepareRenameTool.description,
-                inputSchema: PrepareRenameTool.inputSchema
-            ),
-            MCPTool(
-                name: RenameTool.name,
-                description: RenameTool.description,
-                inputSchema: RenameTool.inputSchema
-            ),
-            MCPTool(
-                name: CodeActionTool.name,
-                description: CodeActionTool.description,
-                inputSchema: CodeActionTool.inputSchema
-            ),
-            MCPTool(
-                name: DiagnosticsTool.name,
-                description: DiagnosticsTool.description,
-                inputSchema: DiagnosticsTool.inputSchema
-            ),
-            MCPTool(
-                name: CheckInstallationTool.name,
-                description: CheckInstallationTool.description,
-                inputSchema: CheckInstallationTool.inputSchema
-            ),
-            MCPTool(
-                name: InstallTool.name,
-                description: InstallTool.description,
-                inputSchema: InstallTool.inputSchema
-            ),
-            MCPTool(
-                name: InstallStatusTool.name,
-                description: InstallStatusTool.description,
-                inputSchema: InstallStatusTool.inputSchema
-            ),
-            MCPTool(
-                name: SessionStatusTool.name,
-                description: SessionStatusTool.description,
-                inputSchema: SessionStatusTool.inputSchema
-            ),
-            MCPTool(
-                name: SessionWarmupTool.name,
-                description: SessionWarmupTool.description,
-                inputSchema: SessionWarmupTool.inputSchema
-            ),
-            MCPTool(
-                name: SessionShutdownTool.name,
-                description: SessionShutdownTool.description,
-                inputSchema: SessionShutdownTool.inputSchema
-            ),
-            MCPTool(
-                name: CallHierarchyPrepareTool.name,
-                description: CallHierarchyPrepareTool.description,
-                inputSchema: CallHierarchyPrepareTool.inputSchema
-            ),
-            MCPTool(
-                name: CallHierarchyIncomingTool.name,
-                description: CallHierarchyIncomingTool.description,
-                inputSchema: CallHierarchyIncomingTool.inputSchema
-            ),
-            MCPTool(
-                name: CallHierarchyOutgoingTool.name,
-                description: CallHierarchyOutgoingTool.description,
-                inputSchema: CallHierarchyOutgoingTool.inputSchema
-            ),
-            MCPTool(
-                name: TypeHierarchyPrepareTool.name,
-                description: TypeHierarchyPrepareTool.description,
-                inputSchema: TypeHierarchyPrepareTool.inputSchema
-            ),
-            MCPTool(
-                name: TypeHierarchySupertypesTool.name,
-                description: TypeHierarchySupertypesTool.description,
-                inputSchema: TypeHierarchySupertypesTool.inputSchema
-            ),
-            MCPTool(
-                name: TypeHierarchySubtypesTool.name,
-                description: TypeHierarchySubtypesTool.description,
-                inputSchema: TypeHierarchySubtypesTool.inputSchema
-            ),
-            MCPTool(
-                name: MonikerTool.name,
-                description: MonikerTool.description,
-                inputSchema: MonikerTool.inputSchema
-            ),
-            MCPTool(
-                name: CodeLensTool.name,
-                description: CodeLensTool.description,
-                inputSchema: CodeLensTool.inputSchema
-            ),
-            MCPTool(
-                name: CodeLensResolveTool.name,
-                description: CodeLensResolveTool.description,
-                inputSchema: CodeLensResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: InlayHintTool.name,
-                description: InlayHintTool.description,
-                inputSchema: InlayHintTool.inputSchema
-            ),
-            MCPTool(
-                name: InlayHintResolveTool.name,
-                description: InlayHintResolveTool.description,
-                inputSchema: InlayHintResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: InlineValueTool.name,
-                description: InlineValueTool.description,
-                inputSchema: InlineValueTool.inputSchema
-            ),
-            MCPTool(
-                name: FoldingRangeTool.name,
-                description: FoldingRangeTool.description,
-                inputSchema: FoldingRangeTool.inputSchema
-            ),
-            MCPTool(
-                name: SelectionRangeTool.name,
-                description: SelectionRangeTool.description,
-                inputSchema: SelectionRangeTool.inputSchema
-            ),
-            MCPTool(
-                name: SemanticTokensFullTool.name,
-                description: SemanticTokensFullTool.description,
-                inputSchema: SemanticTokensFullTool.inputSchema
-            ),
-            MCPTool(
-                name: SemanticTokensRangeTool.name,
-                description: SemanticTokensRangeTool.description,
-                inputSchema: SemanticTokensRangeTool.inputSchema
-            ),
-            MCPTool(
-                name: SemanticTokensDeltaTool.name,
-                description: SemanticTokensDeltaTool.description,
-                inputSchema: SemanticTokensDeltaTool.inputSchema
-            ),
-            MCPTool(
-                name: LinkedEditingRangeTool.name,
-                description: LinkedEditingRangeTool.description,
-                inputSchema: LinkedEditingRangeTool.inputSchema
-            ),
-            MCPTool(
-                name: DocumentLinkTool.name,
-                description: DocumentLinkTool.description,
-                inputSchema: DocumentLinkTool.inputSchema
-            ),
-            MCPTool(
-                name: DocumentLinkResolveTool.name,
-                description: DocumentLinkResolveTool.description,
-                inputSchema: DocumentLinkResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: DocumentColorTool.name,
-                description: DocumentColorTool.description,
-                inputSchema: DocumentColorTool.inputSchema
-            ),
-            MCPTool(
-                name: ColorPresentationTool.name,
-                description: ColorPresentationTool.description,
-                inputSchema: ColorPresentationTool.inputSchema
-            ),
-            MCPTool(
-                name: CompletionResolveTool.name,
-                description: CompletionResolveTool.description,
-                inputSchema: CompletionResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: CodeActionResolveTool.name,
-                description: CodeActionResolveTool.description,
-                inputSchema: CodeActionResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: FormattingTool.name,
-                description: FormattingTool.description,
-                inputSchema: FormattingTool.inputSchema
-            ),
-            MCPTool(
-                name: RangeFormattingTool.name,
-                description: RangeFormattingTool.description,
-                inputSchema: RangeFormattingTool.inputSchema
-            ),
-            MCPTool(
-                name: OnTypeFormattingTool.name,
-                description: OnTypeFormattingTool.description,
-                inputSchema: OnTypeFormattingTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceSymbolResolveTool.name,
-                description: WorkspaceSymbolResolveTool.description,
-                inputSchema: WorkspaceSymbolResolveTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceDiagnosticPullTool.name,
-                description: WorkspaceDiagnosticPullTool.description,
-                inputSchema: WorkspaceDiagnosticPullTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceExecuteCommandTool.name,
-                description: WorkspaceExecuteCommandTool.description,
-                inputSchema: WorkspaceExecuteCommandTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceApplyEditTool.name,
-                description: WorkspaceApplyEditTool.description,
-                inputSchema: WorkspaceApplyEditTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceConfigurationGetTool.name,
-                description: WorkspaceConfigurationGetTool.description,
-                inputSchema: WorkspaceConfigurationGetTool.inputSchema
-            ),
-            MCPTool(
-                name: WorkspaceConfigurationSetTool.name,
-                description: WorkspaceConfigurationSetTool.description,
-                inputSchema: WorkspaceConfigurationSetTool.inputSchema
-            ),
-            MCPTool(
-                name: WillCreateFilesTool.name,
-                description: WillCreateFilesTool.description,
-                inputSchema: WillCreateFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: DidCreateFilesTool.name,
-                description: DidCreateFilesTool.description,
-                inputSchema: DidCreateFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: WillRenameFilesTool.name,
-                description: WillRenameFilesTool.description,
-                inputSchema: WillRenameFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: DidRenameFilesTool.name,
-                description: DidRenameFilesTool.description,
-                inputSchema: DidRenameFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: WillDeleteFilesTool.name,
-                description: WillDeleteFilesTool.description,
-                inputSchema: WillDeleteFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: DidDeleteFilesTool.name,
-                description: DidDeleteFilesTool.description,
-                inputSchema: DidDeleteFilesTool.inputSchema
-            ),
-            MCPTool(
-                name: BatchTool.name,
-                description: BatchTool.description,
-                inputSchema: BatchTool.inputSchema
-            ),
-            MCPTool(
-                name: HoverBundleTool.name,
-                description: HoverBundleTool.description,
-                inputSchema: HoverBundleTool.inputSchema
-            ),
-            MCPTool(
-                name: SymbolWalkTool.name,
-                description: SymbolWalkTool.description,
-                inputSchema: SymbolWalkTool.inputSchema
-            ),
-            MCPTool(
-                name: GlobalWorkspaceSymbolTool.name,
-                description: GlobalWorkspaceSymbolTool.description,
-                inputSchema: GlobalWorkspaceSymbolTool.inputSchema
-            ),
-            MCPTool(
-                name: CrossWorkspaceDefinitionTool.name,
-                description: CrossWorkspaceDefinitionTool.description,
-                inputSchema: CrossWorkspaceDefinitionTool.inputSchema
-            ),
-            MCPTool(
-                name: DiagnosticsDiffTool.name,
-                description: DiagnosticsDiffTool.description,
-                inputSchema: DiagnosticsDiffTool.inputSchema
-            ),
-            MCPTool(
-                name: CapabilitiesTool.name,
-                description: CapabilitiesTool.description,
-                inputSchema: CapabilitiesTool.inputSchema
-            ),
-            MCPTool(
-                name: NotebookDidOpenTool.name,
-                description: NotebookDidOpenTool.description,
-                inputSchema: NotebookDidOpenTool.inputSchema
-            ),
-            MCPTool(
-                name: NotebookDidChangeTool.name,
-                description: NotebookDidChangeTool.description,
-                inputSchema: NotebookDidChangeTool.inputSchema
-            ),
-            MCPTool(
-                name: NotebookDidCloseTool.name,
-                description: NotebookDidCloseTool.description,
-                inputSchema: NotebookDidCloseTool.inputSchema
-            ),
-        ]
+        toolRegistrations.map { MCPTool(name: $0.name, description: $0.description, inputSchema: $0.inputSchema) }
     }
 
     // MARK: - Dispatch
 
-    /// Route an MCP `tools/call` to the matching `MCPLSPTool`.
+    /// Route an MCP `tools/call` to the matching `MCPLSPTool`, found by
+    /// linear scan of `toolRegistrations` (~70 entries -- not worth a
+    /// dictionary).
     func handleToolCall(name: String, arguments: [String: AnyCodable]) async throws -> MCPContent {
-        switch name {
-        case HoverTool.name:
-            return try await HoverTool.handle(arguments: arguments, bridge: self)
-        case DefinitionTool.name:
-            return try await DefinitionTool.handle(arguments: arguments, bridge: self)
-        case DeclarationTool.name:
-            return try await DeclarationTool.handle(arguments: arguments, bridge: self)
-        case TypeDefinitionTool.name:
-            return try await TypeDefinitionTool.handle(arguments: arguments, bridge: self)
-        case ImplementationTool.name:
-            return try await ImplementationTool.handle(arguments: arguments, bridge: self)
-        case ReferencesTool.name:
-            return try await ReferencesTool.handle(arguments: arguments, bridge: self)
-        case DocumentHighlightTool.name:
-            return try await DocumentHighlightTool.handle(arguments: arguments, bridge: self)
-        case DocumentSymbolTool.name:
-            return try await DocumentSymbolTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceSymbolTool.name:
-            return try await WorkspaceSymbolTool.handle(arguments: arguments, bridge: self)
-        case CompletionTool.name:
-            return try await CompletionTool.handle(arguments: arguments, bridge: self)
-        case SignatureHelpTool.name:
-            return try await SignatureHelpTool.handle(arguments: arguments, bridge: self)
-        case PrepareRenameTool.name:
-            return try await PrepareRenameTool.handle(arguments: arguments, bridge: self)
-        case RenameTool.name:
-            return try await RenameTool.handle(arguments: arguments, bridge: self)
-        case CodeActionTool.name:
-            return try await CodeActionTool.handle(arguments: arguments, bridge: self)
-        case DiagnosticsTool.name:
-            return try await DiagnosticsTool.handle(arguments: arguments, bridge: self)
-        case CheckInstallationTool.name:
-            return try await CheckInstallationTool.handle(arguments: arguments, bridge: self)
-        case InstallTool.name:
-            return try await InstallTool.handle(arguments: arguments, bridge: self)
-        case InstallStatusTool.name:
-            return try await InstallStatusTool.handle(arguments: arguments, bridge: self)
-        case SessionStatusTool.name:
-            return try await SessionStatusTool.handle(arguments: arguments, bridge: self)
-        case SessionWarmupTool.name:
-            return try await SessionWarmupTool.handle(arguments: arguments, bridge: self)
-        case SessionShutdownTool.name:
-            return try await SessionShutdownTool.handle(arguments: arguments, bridge: self)
-        case CallHierarchyPrepareTool.name:
-            return try await CallHierarchyPrepareTool.handle(arguments: arguments, bridge: self)
-        case CallHierarchyIncomingTool.name:
-            return try await CallHierarchyIncomingTool.handle(arguments: arguments, bridge: self)
-        case CallHierarchyOutgoingTool.name:
-            return try await CallHierarchyOutgoingTool.handle(arguments: arguments, bridge: self)
-        case TypeHierarchyPrepareTool.name:
-            return try await TypeHierarchyPrepareTool.handle(arguments: arguments, bridge: self)
-        case TypeHierarchySupertypesTool.name:
-            return try await TypeHierarchySupertypesTool.handle(arguments: arguments, bridge: self)
-        case TypeHierarchySubtypesTool.name:
-            return try await TypeHierarchySubtypesTool.handle(arguments: arguments, bridge: self)
-        case MonikerTool.name:
-            return try await MonikerTool.handle(arguments: arguments, bridge: self)
-        case CodeLensTool.name:
-            return try await CodeLensTool.handle(arguments: arguments, bridge: self)
-        case CodeLensResolveTool.name:
-            return try await CodeLensResolveTool.handle(arguments: arguments, bridge: self)
-        case InlayHintTool.name:
-            return try await InlayHintTool.handle(arguments: arguments, bridge: self)
-        case InlayHintResolveTool.name:
-            return try await InlayHintResolveTool.handle(arguments: arguments, bridge: self)
-        case InlineValueTool.name:
-            return try await InlineValueTool.handle(arguments: arguments, bridge: self)
-        case FoldingRangeTool.name:
-            return try await FoldingRangeTool.handle(arguments: arguments, bridge: self)
-        case SelectionRangeTool.name:
-            return try await SelectionRangeTool.handle(arguments: arguments, bridge: self)
-        case SemanticTokensFullTool.name:
-            return try await SemanticTokensFullTool.handle(arguments: arguments, bridge: self)
-        case SemanticTokensRangeTool.name:
-            return try await SemanticTokensRangeTool.handle(arguments: arguments, bridge: self)
-        case SemanticTokensDeltaTool.name:
-            return try await SemanticTokensDeltaTool.handle(arguments: arguments, bridge: self)
-        case LinkedEditingRangeTool.name:
-            return try await LinkedEditingRangeTool.handle(arguments: arguments, bridge: self)
-        case DocumentLinkTool.name:
-            return try await DocumentLinkTool.handle(arguments: arguments, bridge: self)
-        case DocumentLinkResolveTool.name:
-            return try await DocumentLinkResolveTool.handle(arguments: arguments, bridge: self)
-        case DocumentColorTool.name:
-            return try await DocumentColorTool.handle(arguments: arguments, bridge: self)
-        case ColorPresentationTool.name:
-            return try await ColorPresentationTool.handle(arguments: arguments, bridge: self)
-        case CompletionResolveTool.name:
-            return try await CompletionResolveTool.handle(arguments: arguments, bridge: self)
-        case CodeActionResolveTool.name:
-            return try await CodeActionResolveTool.handle(arguments: arguments, bridge: self)
-        case FormattingTool.name:
-            return try await FormattingTool.handle(arguments: arguments, bridge: self)
-        case RangeFormattingTool.name:
-            return try await RangeFormattingTool.handle(arguments: arguments, bridge: self)
-        case OnTypeFormattingTool.name:
-            return try await OnTypeFormattingTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceSymbolResolveTool.name:
-            return try await WorkspaceSymbolResolveTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceDiagnosticPullTool.name:
-            return try await WorkspaceDiagnosticPullTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceExecuteCommandTool.name:
-            return try await WorkspaceExecuteCommandTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceApplyEditTool.name:
-            return try await WorkspaceApplyEditTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceConfigurationGetTool.name:
-            return try await WorkspaceConfigurationGetTool.handle(arguments: arguments, bridge: self)
-        case WorkspaceConfigurationSetTool.name:
-            return try await WorkspaceConfigurationSetTool.handle(arguments: arguments, bridge: self)
-        case WillCreateFilesTool.name:
-            return try await WillCreateFilesTool.handle(arguments: arguments, bridge: self)
-        case DidCreateFilesTool.name:
-            return try await DidCreateFilesTool.handle(arguments: arguments, bridge: self)
-        case WillRenameFilesTool.name:
-            return try await WillRenameFilesTool.handle(arguments: arguments, bridge: self)
-        case DidRenameFilesTool.name:
-            return try await DidRenameFilesTool.handle(arguments: arguments, bridge: self)
-        case WillDeleteFilesTool.name:
-            return try await WillDeleteFilesTool.handle(arguments: arguments, bridge: self)
-        case DidDeleteFilesTool.name:
-            return try await DidDeleteFilesTool.handle(arguments: arguments, bridge: self)
-        case BatchTool.name:
-            return try await BatchTool.handle(arguments: arguments, bridge: self)
-        case HoverBundleTool.name:
-            return try await HoverBundleTool.handle(arguments: arguments, bridge: self)
-        case SymbolWalkTool.name:
-            return try await SymbolWalkTool.handle(arguments: arguments, bridge: self)
-        case GlobalWorkspaceSymbolTool.name:
-            return try await GlobalWorkspaceSymbolTool.handle(arguments: arguments, bridge: self)
-        case CrossWorkspaceDefinitionTool.name:
-            return try await CrossWorkspaceDefinitionTool.handle(arguments: arguments, bridge: self)
-        case DiagnosticsDiffTool.name:
-            return try await DiagnosticsDiffTool.handle(arguments: arguments, bridge: self)
-        case CapabilitiesTool.name:
-            return try await CapabilitiesTool.handle(arguments: arguments, bridge: self)
-        case NotebookDidOpenTool.name:
-            return try await NotebookDidOpenTool.handle(arguments: arguments, bridge: self)
-        case NotebookDidChangeTool.name:
-            return try await NotebookDidChangeTool.handle(arguments: arguments, bridge: self)
-        case NotebookDidCloseTool.name:
-            return try await NotebookDidCloseTool.handle(arguments: arguments, bridge: self)
-        default:
+        guard let registration = Self.toolRegistrations.first(where: { $0.name == name }) else {
             throw MCPLSPBridgeError.unknownTool(name)
         }
+        return try await registration.handle(arguments, self)
     }
 
     // MARK: - Argument helpers

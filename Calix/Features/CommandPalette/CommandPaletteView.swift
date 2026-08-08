@@ -182,7 +182,7 @@ class CommandPaletteView: NSView, NSTableViewDelegate, NSTableViewDataSource, NS
         cell.textField?.stringValue = command.title
 
         if let shortcutLabel = cell.viewWithTag(1001) as? NSTextField {
-            shortcutLabel.stringValue = command.shortcut ?? ""
+            shortcutLabel.stringValue = command.shortcut?.display ?? ""
         }
 
         return cell

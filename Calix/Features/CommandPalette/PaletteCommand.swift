@@ -10,7 +10,7 @@ import Foundation
 struct PaletteCommand: Identifiable, Sendable {
     let id: String
     let title: String
-    let shortcut: String?
+    let shortcut: CommandShortcut?
     let category: String
     let isAvailable: @MainActor @Sendable () -> Bool
     let handler: @MainActor @Sendable () -> Void
@@ -18,7 +18,7 @@ struct PaletteCommand: Identifiable, Sendable {
     init(
         id: String,
         title: String,
-        shortcut: String? = nil,
+        shortcut: CommandShortcut? = nil,
         category: String = "General",
         isAvailable: @escaping @MainActor @Sendable () -> Bool = { true },
         handler: @escaping @MainActor @Sendable () -> Void

@@ -31,7 +31,7 @@ final class CommandRegistryTests: XCTestCase {
     private func makeCommand(
         id: String = "test.cmd",
         title: String = "Test Command",
-        shortcut: String? = nil,
+        shortcut: CommandShortcut? = nil,
         category: String = "General"
     ) -> PaletteCommand {
         PaletteCommand(id: id, title: title, shortcut: shortcut, category: category) {}

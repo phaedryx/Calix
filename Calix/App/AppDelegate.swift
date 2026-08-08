@@ -1144,8 +1144,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let fileMenu = NSMenu(title: "File")
         fileMenuItem.submenu = fileMenu
 
-        fileMenu.addItem(withTitle: "New Window", action: #selector(createNewWindow), keyEquivalent: "n")
-        fileMenu.addItem(withTitle: "New Tab", action: #selector(CalixWindowController.newTab(_:)), keyEquivalent: "t")
+        let newWindowItem = NSMenuItem(title: "New Window", action: #selector(createNewWindow), keyEquivalent: CommandShortcut.newWindow.key)
+        newWindowItem.keyEquivalentModifierMask = CommandShortcut.newWindow.modifiers
+        fileMenu.addItem(newWindowItem)
+
+        let newTabItem = NSMenuItem(title: "New Tab", action: #selector(CalixWindowController.newTab(_:)), keyEquivalent: CommandShortcut.newTab.key)
+        newTabItem.keyEquivalentModifierMask = CommandShortcut.newTab.modifiers
+        fileMenu.addItem(newTabItem)
+
         fileMenu.addItem(withTitle: "New Browser Tab", action: #selector(CalixWindowController.newBrowserTab(_:)), keyEquivalent: "")
         fileMenu.addItem(.separator())
 
@@ -1177,7 +1183,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(splitUpItem)
 
         fileMenu.addItem(.separator())
-        fileMenu.addItem(withTitle: "Close Tab", action: #selector(CalixWindowController.closeTab(_:)), keyEquivalent: "w")
+        let closeTabItem = NSMenuItem(title: "Close Tab", action: #selector(CalixWindowController.closeTab(_:)), keyEquivalent: CommandShortcut.closeTab.key)
+        closeTabItem.keyEquivalentModifierMask = CommandShortcut.closeTab.modifiers
+        fileMenu.addItem(closeTabItem)
 
         // Edit menu
         let editMenuItem = NSMenuItem()
@@ -1212,8 +1220,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let findStartItem = NSMenuItem(
             title: "Find…",
             action: #selector(SurfaceView.performFindAction(_:)),
-            keyEquivalent: "f")
-        findStartItem.keyEquivalentModifierMask = [.command]
+            keyEquivalent: CommandShortcut.findInTerminal.key)
+        findStartItem.keyEquivalentModifierMask = CommandShortcut.findInTerminal.modifiers
         findMenu.addItem(findStartItem)
 
         let findNextItem = NSMenuItem(
@@ -1236,9 +1244,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let composeItem = NSMenuItem(
             title: "Compose Input",
             action: #selector(CalixWindowController.toggleComposeOverlay),
-            keyEquivalent: "e"
+            keyEquivalent: CommandShortcut.composeInput.key
         )
-        composeItem.keyEquivalentModifierMask = [.command, .shift]
+        composeItem.keyEquivalentModifierMask = CommandShortcut.composeInput.modifiers
         editMenu.addItem(composeItem)
 
         // View menu
@@ -1250,9 +1258,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let toggleSidebarItem = NSMenuItem(
             title: "Toggle Sidebar",
             action: #selector(CalixWindowController.toggleSidebar),
-            keyEquivalent: "s"
+            keyEquivalent: CommandShortcut.toggleSidebar.key
         )
-        toggleSidebarItem.keyEquivalentModifierMask = [.command, .option]
+        toggleSidebarItem.keyEquivalentModifierMask = CommandShortcut.toggleSidebar.modifiers
         viewMenu.addItem(toggleSidebarItem)
 
         viewMenu.addItem(.separator())
@@ -1276,9 +1284,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let sessionBrowserItem = NSMenuItem(
             title: "Session Browser",
             action: #selector(openSessionBrowser(_:)),
-            keyEquivalent: "b"
+            keyEquivalent: CommandShortcut.sessionBrowser.key
         )
-        sessionBrowserItem.keyEquivalentModifierMask = [.command, .shift]
+        sessionBrowserItem.keyEquivalentModifierMask = CommandShortcut.sessionBrowser.modifiers
         viewMenu.addItem(sessionBrowserItem)
 
         // Window menu
@@ -1298,9 +1306,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let fullScreenItem = NSMenuItem(
             title: "Toggle Full Screen",
             action: #selector(CalixWindowController.toggleFullScreen(_:)),
-            keyEquivalent: "f"
+            keyEquivalent: CommandShortcut.toggleFullScreen.key
         )
-        fullScreenItem.keyEquivalentModifierMask = [.command, .control]
+        fullScreenItem.keyEquivalentModifierMask = CommandShortcut.toggleFullScreen.modifiers
         windowMenu.addItem(fullScreenItem)
 
         windowMenu.addItem(.separator())
@@ -1342,16 +1350,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(.separator())
 
         // Tab navigation via menu
-        let nextTabItem = NSMenuItem(title: "Select Next Tab", action: #selector(CalixWindowController.selectNextTab(_:)), keyEquivalent: "]")
-        nextTabItem.keyEquivalentModifierMask = [.command, .shift]
+        let nextTabItem = NSMenuItem(title: "Select Next Tab", action: #selector(CalixWindowController.selectNextTab(_:)), keyEquivalent: CommandShortcut.nextTab.key)
+        nextTabItem.keyEquivalentModifierMask = CommandShortcut.nextTab.modifiers
         windowMenu.addItem(nextTabItem)
 
-        let prevTabItem = NSMenuItem(title: "Select Previous Tab", action: #selector(CalixWindowController.selectPreviousTab(_:)), keyEquivalent: "[")
-        prevTabItem.keyEquivalentModifierMask = [.command, .shift]
+        let prevTabItem = NSMenuItem(title: "Select Previous Tab", action: #selector(CalixWindowController.selectPreviousTab(_:)), keyEquivalent: CommandShortcut.previousTab.key)
+        prevTabItem.keyEquivalentModifierMask = CommandShortcut.previousTab.modifiers
         windowMenu.addItem(prevTabItem)
 
-        let jumpUnreadItem = NSMenuItem(title: "Jump to Unread Tab", action: #selector(CalixWindowController.jumpToMostRecentUnreadTab), keyEquivalent: "u")
-        jumpUnreadItem.keyEquivalentModifierMask = [.command, .shift]
+        let jumpUnreadItem = NSMenuItem(title: "Jump to Unread Tab", action: #selector(CalixWindowController.jumpToMostRecentUnreadTab), keyEquivalent: CommandShortcut.jumpToUnreadTab.key)
+        jumpUnreadItem.keyEquivalentModifierMask = CommandShortcut.jumpToUnreadTab.modifiers
         windowMenu.addItem(jumpUnreadItem)
 
         windowMenu.addItem(.separator())
@@ -1378,15 +1386,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let newGroupItem = NSMenuItem(
             title: "New Group",
             action: #selector(CalixWindowController.newGroup(_:)),
-            keyEquivalent: "n")
-        newGroupItem.keyEquivalentModifierMask = [.control, .shift]
+            keyEquivalent: CommandShortcut.newGroup.key)
+        newGroupItem.keyEquivalentModifierMask = CommandShortcut.newGroup.modifiers
         groupMenu.addItem(newGroupItem)
 
         let closeGroupItem = NSMenuItem(
             title: "Close Group",
             action: #selector(CalixWindowController.closeGroup(_:)),
-            keyEquivalent: "w")
-        closeGroupItem.keyEquivalentModifierMask = [.control, .shift]
+            keyEquivalent: CommandShortcut.closeGroup.key)
+        closeGroupItem.keyEquivalentModifierMask = CommandShortcut.closeGroup.modifiers
         groupMenu.addItem(closeGroupItem)
 
         groupMenu.addItem(.separator())
@@ -1394,15 +1402,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let nextGroupItem = NSMenuItem(
             title: "Next Group",
             action: #selector(CalixWindowController.nextGroup(_:)),
-            keyEquivalent: "]")
-        nextGroupItem.keyEquivalentModifierMask = [.control, .shift]
+            keyEquivalent: CommandShortcut.nextGroup.key)
+        nextGroupItem.keyEquivalentModifierMask = CommandShortcut.nextGroup.modifiers
         groupMenu.addItem(nextGroupItem)
 
         let prevGroupItem = NSMenuItem(
             title: "Previous Group",
             action: #selector(CalixWindowController.previousGroup(_:)),
-            keyEquivalent: "[")
-        prevGroupItem.keyEquivalentModifierMask = [.control, .shift]
+            keyEquivalent: CommandShortcut.previousGroup.key)
+        prevGroupItem.keyEquivalentModifierMask = CommandShortcut.previousGroup.modifiers
         groupMenu.addItem(prevGroupItem)
 
         windowMenu.addItem(groupMenuItem)
